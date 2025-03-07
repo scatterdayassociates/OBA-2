@@ -1,0 +1,14 @@
+flashtext
+pandas
+playwright
+pillow
+greenlet
+schedule
+pytz
+beautifulsoup4
+mysql-connector-python==8.0.33
+streamlit>=1.40.0
+pymysql==1.1.0  # or mysqlclient==2.2.0
+SQLAlchemy==2.0.25
+cryptography==42.0.5
+
