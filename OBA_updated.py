@@ -10,93 +10,114 @@ import schedule
 import time
 from datetime import datetime
 from contextlib import contextmanager
-from scrapper_mysql import scraper
 
 st.set_page_config(layout="wide")
 
 target_tz = pytz.timezone('America/New_York')
 
+# Global connection pool - initialize ONCE as a singleton
+CONNECTION_POOL_LOCK = threading.Lock()
+CONNECTION_POOL = None
+
+def get_connection_pool():
+    """Singleton pattern to ensure only one connection pool is created"""
+    global CONNECTION_POOL
+    
+    with CONNECTION_POOL_LOCK:
+        if CONNECTION_POOL is None:
+            try:
+                CONNECTION_POOL = mysql.connector.pooling.MySQLConnectionPool(
+                    pool_name="mypool",
+                    pool_size=10, 
+                    host=st.secrets.mysql.host,
+                    user=st.secrets.mysql.user,
+                    password=st.secrets.mysql.password,
+                    database=st.secrets.mysql.database,
+                    port=st.secrets.mysql.port,
+                    pool_reset_session=True  # Reset session variables when returning to pool
+                )
+                st.success("✅ Connection pool created successfully")
+            except Exception as e:
+                st.error(f"Failed to create connection pool: {e}")
+                raise
+    
+    return CONNECTION_POOL
+
+
+@contextmanager
+def get_db_connection():
+    conn = None
+    try:
+        conn = get_connection_pool().get_connection()
+        yield conn
+    except mysql.connector.errors.PoolError:
+        st.error("❌ Connection pool exhausted. Try again later.")
+        yield None
+    except Exception as e:
+        st.error(f"Failed to get connection: {e}")
+        yield None
+    finally:
+        if conn and conn.is_connected():  # ✅ Prevent double-close
+            try:
+                conn.rollback()  # ✅ Ensures any uncommitted transaction is cleared.
+                conn.close()  # ✅ Connection is always returned to the pool.
+            except Exception as e:
+                st.error(f"Error closing connection: {e}")
+
+
+
+
+@contextmanager
+def get_db_cursor(dictionary=False):
+    """Context manager that handles both connection and cursor"""
+    with get_db_connection() as conn:
+        if conn is None:
+            yield None
+        else:
+            with conn.cursor(dictionary=dictionary) as cursor:  # ✅ Uses `with` for auto-close.
+                try:
+                    yield cursor
+                    conn.commit()  # ✅ Auto-commit if no exceptions.
+                except Exception as e:
+                    conn.rollback()  # ✅ Rollback if an error occurs.
+                    raise
+
+
+# Modified scraper function to pass the connection to the scraper
+def run_scraper():
+    print("Running scheduled scraper")
+    from scrapper_mysql import scraper
+    with get_db_connection() as conn:  # ✅ Uses pooled connection.
+        if conn:
+            try:
+                # Pass the connection with a clear note about handling
+                # Add documentation about connection handling expectations
+                scraper(conn, close_connection=False)  # Explicitly indicate not to close
+            except Exception as e:
+                st.error(f"Scraper error: {e}")
+
+
+# Thread function for running the scheduler
 def run_scheduler():
     while True:
         schedule.run_pending()
         time.sleep(1)
 
-def run_scraper():
-    print("schedule scrapper")
-    scraper(
-        st.secrets.mysql.host,
-        st.secrets.mysql.user,
-        st.secrets.mysql.password,
-        st.secrets.mysql.database,
-        st.secrets.mysql.port
-    )
-
-# Initialize connection pool
-@st.cache_resource
-def init_connection_pool():
-    return mysql.connector.pooling.MySQLConnectionPool(
-        pool_name="mypool",
-        pool_size=5,
-        host=st.secrets.mysql.host,
-        user=st.secrets.mysql.user,
-        password=st.secrets.mysql.password,
-        database=st.secrets.mysql.database,
-        port=st.secrets.mysql.port
-    )
-
-# Context manager for database connections
-@contextmanager
-def get_db_connection():
-    conn = None
-    try:
-        conn = init_connection_pool().get_connection()
-        yield conn
-    except Exception as e:
-        st.error(f"Failed to get connection from pool: {e}")
-        yield None
-    finally:
-        if conn:
-            conn.close()
-
-# Test connection with proper error handling
-if "connection_tested" not in st.session_state:
-    st.session_state["connection_tested"] = True
-    with get_db_connection() as test_conn:
-        if test_conn:
-            st.success("✅ Connection successful")
-        else:
-            st.error("Connection failed")
-
-# Only define and start the scheduler once
-if "scheduler_thread_started" not in st.session_state:
-    st.session_state["scheduler_thread_started"] = True
-    schedule.every().day.at("21:05").do(run_scraper)
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-    scheduler_thread.start()
-
 # Function to execute queries safely
 def execute_query(query, params=None, fetch_all=True, as_dict=False):
-    with get_db_connection() as conn:
-        if not conn:
-            return [] if fetch_all else None
-        
-        cursor = None
-        try:
-            cursor = conn.cursor(dictionary=as_dict)
-            cursor.execute(query, params or [])
+    try:
+        with get_db_cursor(dictionary=as_dict) as cursor:
+            if cursor is None:
+                st.error("❌ Database connection failed. Query execution aborted.")
+                return [] if fetch_all else None
             
-            if fetch_all:
-                result = cursor.fetchall()
-            else:
-                result = cursor.fetchone()
-                
-            return result
-        except mysql.connector.Error as err:
-            st.error(f"Database error: {err}")
-            return [] if fetch_all else None
-        finally:
-            if cursor:
-                cursor.close()
+            cursor.execute(query, params or [])
+            return cursor.fetchall() if fetch_all else cursor.fetchone()
+    except mysql.connector.Error as err:
+        st.error(f"Database error: {err}")
+        return [] if fetch_all else None
+
+
 
 @st.cache_data
 def get_unique_values(column):
@@ -179,6 +200,19 @@ def reset_all_states():
     st.rerun()
 
 def main():
+    # Test connection once using our new connection manager
+    if "connection_tested" not in st.session_state:
+        st.session_state["connection_tested"] = True
+        # Initializing the connection pool will automatically verify the connection
+        get_connection_pool()
+    
+    # Start scheduler thread only once
+    if "scheduler_thread_started" not in st.session_state:
+        st.session_state["scheduler_thread_started"] = True
+        schedule.every().day.at("21:05").do(run_scraper)
+        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+        scheduler_thread.start()
+
     if 'reset_trigger' not in st.session_state:
         st.session_state.reset_trigger = False
 
@@ -202,7 +236,7 @@ def main():
         "<h5 style='text-align: left; color: #888888;'>Pinpoint Commercial Opportunities with the City of New York</h5>",
         unsafe_allow_html=True,
     )
-    st.sidebar.image("image001.png",  use_container_width=True)
+    st.sidebar.image("image001.png", use_container_width=True)
     st.sidebar.header("Search Filters")
 
     default_value = "" if st.session_state.get('reset_trigger', False) else st.session_state.get('keyword', "")
@@ -275,7 +309,8 @@ def main():
 
     if st.sidebar.button("Update Awards Data"):
         with st.spinner("Processing..."):
-            scraper(st.secrets["mysql"]["host"], st.secrets["mysql"]["user"], st.secrets["mysql"]["password"], st.secrets["mysql"]["database"], st.secrets["mysql"]["port"])
+            # Using the run_scraper function that properly manages connections
+            run_scraper()
         st.success("Award update complete!")
 
     if st.session_state.show_results and not st.session_state.results.empty:
@@ -316,7 +351,7 @@ def main():
     if st.session_state.show_awards and filters_applied:
         st.markdown("Fiscal Year 2025 NYC Government Procurement Awards")
         
-        # Using execute_query function 
+        # Using our improved execute_query function 
         query = "SELECT * FROM nycproawards4"
         awards_data = execute_query(query, as_dict=True)
         df_awards = pd.DataFrame(awards_data) if awards_data else pd.DataFrame()

@@ -1,33 +1,11 @@
 import pandas as pd
-import mysql.connector
 import requests
 from bs4 import BeautifulSoup
 import time
 import random
-from contextlib import contextmanager
 
-# Context manager for database connections
-@contextmanager
-def get_db_connection(host, user, password, database, port):
-    conn = None
-    try:
-        conn = mysql.connector.connect(
-            host=host,
-            user=user,
-            password=password,
-            database=database,
-            port=port
-        )
-        yield conn
-    except mysql.connector.Error as err:
-        print(f"Database connection error: {err}")
-        yield None
-    finally:
-        if conn:
-            conn.close()
-
-# Function to scrape data from the website with better error handling
 def scrape_data():
+    """Scrape data from the NYC procurement website"""
     cookies = {
         'ak_bmsc': '0E08843E4257240434F033A03D6714DD~000000000000000000000000000000~YAAQSJ42F2yUkS+TAQAAc5QEQBk6tyeodmKbK0+6Uz4uJ6d/3sUD6zZEk5sfq+ZaP84RgD+ji4onlCBFYFbPm1iycFE72h894XCCgh0ZiTRMWZZ/1Yg9WVZfeyFNfvkR6mg3zLN9nSOfADBrWbtFfvP1bfyiB5Rzqywa88H1NTeX2qvUsS9B9IAiTiRPav/KfjSEuSYEioe4jl6pG14gNkwyjK6FAKUJkQX64e3Q9RVFC+plwrylg+Sg89pWKkt0ED/H9gTMe7s6ix9IyQuYrB7Mdu2QKXDogTeTQTH7C+deNFiHQwcy2c3Sj7iB5mIP8dIRWi2Z2a9YwKksra6mtcu51Zg+BeqaY4rEwy6tS65hmF7yfTCJpw5nUn54Ev4=',
         '_ga': 'GA1.2.1749921805.1731945974',
@@ -130,99 +108,62 @@ def scrape_data():
     
     print(f"Scraping complete. Found {len(data_data)} records.")
     return pd.DataFrame(data_data)
-
-def scraper(host, user, password, database, port):
+def scraper(conn):
     print("Starting NYC Procurement Awards scraper...")
-
     try:
-        # Scrape the data and create the DataFrame
         scraped_df = scrape_data()
-
-        # Check if DataFrame is empty
         if scraped_df.empty:
             print("No data scraped. Exiting.")
             return False
 
         print(f"DataFrame shape: {scraped_df.shape}")
         print("DataFrame columns:", scraped_df.columns)
-        print(scraped_df.head())  # Display first few rows of the DataFrame
+        print(scraped_df.head())
 
-        # Use context manager for database connection
-        with get_db_connection(host, user, password, database, port) as conn:
-            if not conn:
-                print("Failed to establish database connection.")
-                return False
+        with conn.cursor() as cursor:  # ✅ Cursor auto-closes
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS nycproawards4 (...)
+            """)
+            conn.commit()
+
+            batch_size = 50
+            total_updated = 0
+            total_inserted = 0
             
-            cursor = None
-            try:
-                cursor = conn.cursor()
+            for i in range(0, len(scraped_df), batch_size):
+                batch = scraped_df.iloc[i:i+batch_size]
+                print(f"Processing batch {i//batch_size + 1} of {(len(scraped_df) + batch_size - 1) // batch_size}")
                 
-                # Create table if it doesn't exist
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS nycproawards4 (
-                        id INT AUTO_INCREMENT PRIMARY KEY,
-                        Agency VARCHAR(255),
-                        Title VARCHAR(255) UNIQUE,
-                        `Award Date` VARCHAR(100),
-                        Description TEXT,
-                        Category VARCHAR(100),
-                        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-                    )
-                """)
-                conn.commit()
-                
-                # Process records in smaller batches to avoid long-running transactions
-                batch_size = 50
-                total_updated = 0
-                total_inserted = 0
-                
-                for i in range(0, len(scraped_df), batch_size):
-                    batch = scraped_df.iloc[i:i+batch_size]
-                    print(f"Processing batch {i//batch_size + 1} of {(len(scraped_df) + batch_size - 1) // batch_size}")
-                    
-                    for _, row in batch.iterrows():
-                        try:
-                            # Check if the record already exists
-                            cursor.execute("SELECT COUNT(*) FROM nycproawards4 WHERE Title=%s", (row['Title'],))
-                            exists = cursor.fetchone()[0]
+                for _, row in batch.iterrows():
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM nycproawards4 WHERE Title=%s", (row['Title'],))
+                        exists = cursor.fetchone()[0]
 
-                            if exists:
-                                # Update existing record
-                                cursor.execute("""
-                                    UPDATE nycproawards4 
-                                    SET Agency=%s, `Award Date`=%s, Description=%s, Category=%s 
-                                    WHERE Title=%s
-                                """, (row['Agency'], row['Award Date'], row['Description'], row['Category'], row['Title']))
-                                total_updated += 1
-                            else:
-                                # Insert new record
-                                cursor.execute("""
-                                    INSERT INTO nycproawards4 (Agency, Title, `Award Date`, Description, Category) 
-                                    VALUES (%s, %s, %s, %s, %s)
-                                """, (row['Agency'], row['Title'], row['Award Date'], row['Description'], row['Category']))
-                                total_inserted += 1
-                                
-                        except mysql.connector.Error as err:
-                            print(f"Database error processing record: {err}")
-                            continue
-                    
-                    # Commit after each batch
-                    conn.commit()
-                    print(f"Batch committed. Running totals: {total_inserted} inserted, {total_updated} updated")
+                        if exists:
+                            cursor.execute("""
+                                UPDATE nycproawards4 
+                                SET Agency=%s, `Award Date`=%s, Description=%s, Category=%s 
+                                WHERE Title=%s
+                            """, (row['Agency'], row['Award Date'], row['Description'], row['Category'], row['Title']))
+                            total_updated += 1
+                        else:
+                            cursor.execute("""
+                                INSERT INTO nycproawards4 (Agency, Title, `Award Date`, Description, Category) 
+                                VALUES (%s, %s, %s, %s, %s)
+                            """, (row['Agency'], row['Title'], row['Award Date'], row['Description'], row['Category']))
+                            total_inserted += 1
+                            
+                    except Exception as err:
+                        print(f"Database error processing record: {err}")
+                        continue
                 
-                print(f"Data upload complete: {total_inserted} new records, {total_updated} updated records")
-                
-            except mysql.connector.Error as err:
-                print(f"Database operation error: {err}")
-                return False
-                
-            finally:
-                # Ensure cursor is properly closed
-                if cursor:
-                    cursor.close()
-        
-        return True
-        
+                conn.commit()
+
+            print(f"Data upload complete: {total_inserted} new records, {total_updated} updated records")
+            return True
+            
     except Exception as e:
         print(f"Unexpected error in scraper: {e}")
+        conn.rollback()  # ✅ Rollback uncommitted transactions to prevent locks.
         return False
+
