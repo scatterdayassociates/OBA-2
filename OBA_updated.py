@@ -28,7 +28,7 @@ def get_connection_pool():
             try:
                 CONNECTION_POOL = mysql.connector.pooling.MySQLConnectionPool(
                     pool_name="mypool",
-                    pool_size=120, 
+                    pool_size=32, 
                     host=st.secrets.mysql.host,
                     user=st.secrets.mysql.user,
                     password=st.secrets.mysql.password,
