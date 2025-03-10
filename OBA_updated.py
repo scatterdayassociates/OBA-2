@@ -28,7 +28,7 @@ def get_connection_pool():
             try:
                 CONNECTION_POOL = mysql.connector.pooling.MySQLConnectionPool(
                     pool_name="mypool",
-                    pool_size=10, 
+                    pool_size=120, 
                     host=st.secrets.mysql.host,
                     user=st.secrets.mysql.user,
                     password=st.secrets.mysql.password,
@@ -49,20 +49,17 @@ def get_db_connection():
     conn = None
     try:
         conn = get_connection_pool().get_connection()
-        yield conn
-    except mysql.connector.errors.PoolError:
-        st.error("❌ Connection pool exhausted. Try again later.")
-        yield None
-    except Exception as e:
-        st.error(f"Failed to get connection: {e}")
-        yield None
+        yield conn  # ✅ Yields the connection for use
     finally:
-        if conn and conn.is_connected():  # ✅ Prevent double-close
+        if conn and conn.is_connected():
             try:
-                conn.rollback()  # ✅ Ensures any uncommitted transaction is cleared.
-                conn.close()  # ✅ Connection is always returned to the pool.
+                conn.rollback()  # ✅ Clears any pending transactions
+                conn.close()  # ✅ Closes the connection
+                print("🔴 Connection closed successfully")  # ✅ Debug log
             except Exception as e:
-                st.error(f"Error closing connection: {e}")
+                print(f"⚠️ Error closing connection: {e}")
+
+
 
 
 
@@ -82,19 +79,19 @@ def get_db_cursor(dictionary=False):
                     conn.rollback()  # ✅ Rollback if an error occurs.
                     raise
 
-
+SCRAPER_LOCK = threading.Lock()
 # Modified scraper function to pass the connection to the scraper
 def run_scraper():
-    print("Running scheduled scraper")
-    from scrapper_mysql import scraper
-    with get_db_connection() as conn:  # ✅ Uses pooled connection.
-        if conn:
-            try:
-                # Pass the connection with a clear note about handling
-                # Add documentation about connection handling expectations
-                scraper(conn, close_connection=False)  # Explicitly indicate not to close
-            except Exception as e:
-                st.error(f"Scraper error: {e}")
+    if not SCRAPER_LOCK.locked():  # Prevent multiple scrapers from running at once
+        with SCRAPER_LOCK:
+            print("Running scheduled scraper")
+            from scrapper_mysql import scraper
+            with get_db_connection() as conn:
+                if conn:
+                    try:
+                        scraper(conn)
+                    except Exception as e:
+                        st.error(f"Scraper error: {e}")
 
 
 # Thread function for running the scheduler
@@ -103,19 +100,26 @@ def run_scheduler():
         schedule.run_pending()
         time.sleep(1)
 
-# Function to execute queries safely
 def execute_query(query, params=None, fetch_all=True, as_dict=False):
     try:
-        with get_db_cursor(dictionary=as_dict) as cursor:
-            if cursor is None:
+        with get_db_connection() as conn:
+            if conn is None:
                 st.error("❌ Database connection failed. Query execution aborted.")
                 return [] if fetch_all else None
             
-            cursor.execute(query, params or [])
-            return cursor.fetchall() if fetch_all else cursor.fetchone()
+            with conn.cursor(dictionary=as_dict) as cursor:
+                cursor.execute(query, params or [])
+                result = cursor.fetchall() if fetch_all else cursor.fetchone()
+                print("✅ Query executed successfully")
+                return result
     except mysql.connector.Error as err:
         st.error(f"Database error: {err}")
         return [] if fetch_all else None
+    finally:
+        print("🔴 Connection should now be closed")  # ✅ Debug log
+
+
+
 
 
 

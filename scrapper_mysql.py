@@ -108,62 +108,59 @@ def scrape_data():
     
     print(f"Scraping complete. Found {len(data_data)} records.")
     return pd.DataFrame(data_data)
+
 def scraper(conn):
-    print("Starting NYC Procurement Awards scraper...")
+    print("🟢 Scraper started...")
     try:
         scraped_df = scrape_data()
         if scraped_df.empty:
-            print("No data scraped. Exiting.")
+            print("⚠️ No data scraped. Exiting.")
             return False
 
-        print(f"DataFrame shape: {scraped_df.shape}")
-        print("DataFrame columns:", scraped_df.columns)
-        print(scraped_df.head())
-
-        with conn.cursor() as cursor:  # ✅ Cursor auto-closes
+        print(f"✅ Scraped {len(scraped_df)} records")
+        
+        with conn.cursor() as cursor:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS nycproawards4 (...)
             """)
             conn.commit()
 
-            batch_size = 50
-            total_updated = 0
-            total_inserted = 0
-            
-            for i in range(0, len(scraped_df), batch_size):
-                batch = scraped_df.iloc[i:i+batch_size]
-                print(f"Processing batch {i//batch_size + 1} of {(len(scraped_df) + batch_size - 1) // batch_size}")
-                
-                for _, row in batch.iterrows():
-                    try:
-                        cursor.execute("SELECT COUNT(*) FROM nycproawards4 WHERE Title=%s", (row['Title'],))
-                        exists = cursor.fetchone()[0]
+            for _, row in scraped_df.iterrows():
+                try:
+                    cursor.execute("SELECT COUNT(*) FROM nycproawards4 WHERE Title=%s", (row['Title'],))
+                    exists = cursor.fetchone()[0]
 
-                        if exists:
-                            cursor.execute("""
-                                UPDATE nycproawards4 
-                                SET Agency=%s, `Award Date`=%s, Description=%s, Category=%s 
-                                WHERE Title=%s
-                            """, (row['Agency'], row['Award Date'], row['Description'], row['Category'], row['Title']))
-                            total_updated += 1
-                        else:
-                            cursor.execute("""
-                                INSERT INTO nycproawards4 (Agency, Title, `Award Date`, Description, Category) 
-                                VALUES (%s, %s, %s, %s, %s)
-                            """, (row['Agency'], row['Title'], row['Award Date'], row['Description'], row['Category']))
-                            total_inserted += 1
-                            
-                    except Exception as err:
-                        print(f"Database error processing record: {err}")
-                        continue
-                
-                conn.commit()
+                    if exists:
+                        cursor.execute("""
+                            UPDATE nycproawards4 
+                            SET Agency=%s, `Award Date`=%s, Description=%s, Category=%s 
+                            WHERE Title=%s
+                        """, (row['Agency'], row['Award Date'], row['Description'], row['Category'], row['Title']))
+                    else:
+                        cursor.execute("""
+                            INSERT INTO nycproawards4 (Agency, Title, `Award Date`, Description, Category) 
+                            VALUES (%s, %s, %s, %s, %s)
+                        """, (row['Agency'], row['Title'], row['Award Date'], row['Description'], row['Category']))
+                    
+                except Exception as err:
+                    print(f"⚠️ Database error processing record: {err}")
+                    continue
 
-            print(f"Data upload complete: {total_inserted} new records, {total_updated} updated records")
+            conn.commit()
+            print("✅ Scraper data uploaded successfully")
+
+            # ✅ Explicitly close connection
+            conn.close()
+            print("🔴 Scraper connection closed")  # ✅ Debug log
+
             return True
             
     except Exception as e:
-        print(f"Unexpected error in scraper: {e}")
-        conn.rollback()  # ✅ Rollback uncommitted transactions to prevent locks.
+        print(f"❌ Unexpected scraper error: {e}")
+        conn.rollback()
+        conn.close()  # ✅ Ensure connection is always closed
+        print("🔴 Scraper connection closed after error")  # ✅ Debug log
         return False
+
+
 
