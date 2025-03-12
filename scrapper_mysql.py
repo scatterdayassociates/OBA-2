@@ -118,10 +118,17 @@ def scraper(conn):
             return False
 
         print(f"✅ Scraped {len(scraped_df)} records")
-        
+
         with conn.cursor() as cursor:
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS nycproawards4 (...)
+                CREATE TABLE IF NOT EXISTS nycproawards4 (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    Agency VARCHAR(255),
+                    Title TEXT,
+                    `Award Date` DATE,
+                    Description TEXT,
+                    Category VARCHAR(255)
+                )
             """)
             conn.commit()
 
@@ -141,7 +148,7 @@ def scraper(conn):
                             INSERT INTO nycproawards4 (Agency, Title, `Award Date`, Description, Category) 
                             VALUES (%s, %s, %s, %s, %s)
                         """, (row['Agency'], row['Title'], row['Award Date'], row['Description'], row['Category']))
-                    
+
                 except Exception as err:
                     print(f"⚠️ Database error processing record: {err}")
                     continue
@@ -149,18 +156,16 @@ def scraper(conn):
             conn.commit()
             print("✅ Scraper data uploaded successfully")
 
-            # ✅ Explicitly close connection
-            conn.close()
-            print("🔴 Scraper connection closed")  # ✅ Debug log
-
-            return True
-            
     except Exception as e:
         print(f"❌ Unexpected scraper error: {e}")
-        conn.rollback()
-        conn.close()  # ✅ Ensure connection is always closed
-        print("🔴 Scraper connection closed after error")  # ✅ Debug log
-        return False
+
+    finally:  # ✅ Ensure connection always closes!
+        if conn and conn.is_connected():
+            conn.close()
+            print("🔴 Scraper connection closed")
+
+    return True
+
 
 
 

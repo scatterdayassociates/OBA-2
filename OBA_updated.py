@@ -43,19 +43,22 @@ def get_connection_pool():
     
     return CONNECTION_POOL
 
-
 @contextmanager
 def get_db_connection():
     conn = None
     try:
         conn = get_connection_pool().get_connection()
-        yield conn  # ✅ Yields the connection for use
+        yield conn
+    except Exception as e:
+        print(f"⚠️ Connection error: {e}")
+        raise
     finally:
-        if conn and conn.is_connected():
+        if conn:
             try:
-                conn.rollback()  # ✅ Clears any pending transactions
-                conn.close()  # ✅ Closes the connection
-                print("🔴 Connection closed successfully")  # ✅ Debug log
+                # Don't check is_connected() first, just try to close
+                conn.rollback()
+                conn.close()
+                print("🔴 Connection closed successfully")
             except Exception as e:
                 print(f"⚠️ Error closing connection: {e}")
 
@@ -85,13 +88,28 @@ def run_scraper():
     if not SCRAPER_LOCK.locked():  # Prevent multiple scrapers from running at once
         with SCRAPER_LOCK:
             print("Running scheduled scraper")
-            from scrapper_mysql import scraper
-            with get_db_connection() as conn:
-                if conn:
-                    try:
-                        scraper(conn)
-                    except Exception as e:
-                        st.error(f"Scraper error: {e}")
+            try:
+                from scrapper_mysql import scraper
+                # Create a new connection specifically for the scraper
+                # Don't use the context manager here
+                conn = get_connection_pool().get_connection()
+                try:
+                    scraper(conn)
+                    # Explicitly commit changes if needed
+                    
+                except Exception as e:
+                    
+                    st.error(f"Scraper error: {e}")
+                finally:
+                    # Always close the connection
+                    if conn:
+                        try:
+                            conn.close()
+                            print("Scraper connection closed")
+                        except Exception as e:
+                            print(f"Error closing scraper connection: {e}")
+            except Exception as e:
+                print(f"Error closing scraper connection: {e}")
 
 
 # Thread function for running the scheduler
