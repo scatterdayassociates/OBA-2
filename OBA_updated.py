@@ -10,57 +10,70 @@ import schedule
 import time
 from datetime import datetime
 from contextlib import contextmanager
-
 st.set_page_config(layout="wide")
 
 target_tz = pytz.timezone('America/New_York')
 
-# Global connection pool - initialize ONCE as a singleton
+# Global connection pool with lazy initialization
 CONNECTION_POOL_LOCK = threading.Lock()
 CONNECTION_POOL = None
 
+# Connection pool configuration with optimized settings
+POOL_CONFIG = {
+    "pool_name": "mypool",
+    "pool_size": 10,  # Reduced from 32 to a more reasonable size
+    "pool_reset_session": True,
+    "autocommit": True,  # Enable autocommit to reduce transaction overhead
+    "use_pure": True,  # Use pure Python implementation for better compatibility
+}
+
 def get_connection_pool():
-    """Singleton pattern to ensure only one connection pool is created"""
+    """Singleton pattern with lazy initialization for connection pool"""
     global CONNECTION_POOL
+    
+    if CONNECTION_POOL is not None:
+        return CONNECTION_POOL
     
     with CONNECTION_POOL_LOCK:
         if CONNECTION_POOL is None:
             try:
-                CONNECTION_POOL = mysql.connector.pooling.MySQLConnectionPool(
-                    pool_name="mypool",
-                    pool_size=32, 
-                    host=st.secrets.mysql.host,
-                    user=st.secrets.mysql.user,
-                    password=st.secrets.mysql.password,
-                    database=st.secrets.mysql.database,
-                    port=st.secrets.mysql.port,
-                    pool_reset_session=True  # Reset session variables when returning to pool
-                )
-                st.success("✅ Connection pool created successfully")
+                # Load connection settings from secrets
+                db_config = {
+                    "host": st.secrets.mysql.host,
+                    "user": st.secrets.mysql.user,
+                    "password": st.secrets.mysql.password,
+                    "database": st.secrets.mysql.database,
+                    "port": st.secrets.mysql.port,
+                }
+                
+                # Merge with pool config
+                pool_settings = {**POOL_CONFIG, **db_config}
+                
+                # Create connection pool with optimized settings
+                CONNECTION_POOL = mysql.connector.pooling.MySQLConnectionPool(**pool_settings)
+                
+                # Use print instead of st.success to avoid UI delays
+                print("✅ Connection pool created successfully")
             except Exception as e:
-                st.error(f"Failed to create connection pool: {e}")
+                print(f"❌ Failed to create connection pool: {e}")
                 raise
     
     return CONNECTION_POOL
 
 @contextmanager
 def get_db_connection():
+    """Optimized connection context manager"""
     conn = None
     try:
         conn = get_connection_pool().get_connection()
         yield conn
-    except Exception as e:
-        print(f"⚠️ Connection error: {e}")
-        raise
     finally:
         if conn:
             try:
-                # Don't check is_connected() first, just try to close
-                conn.rollback()
                 conn.close()
-                print("🔴 Connection closed successfully")
             except Exception as e:
                 print(f"⚠️ Error closing connection: {e}")
+
 
 
 
@@ -119,35 +132,29 @@ def run_scheduler():
         time.sleep(1)
 
 def execute_query(query, params=None, fetch_all=True, as_dict=False):
+    """Optimized query execution with error handling"""
     try:
         with get_db_connection() as conn:
-            if conn is None:
-                st.error("❌ Database connection failed. Query execution aborted.")
-                return [] if fetch_all else None
-            
             with conn.cursor(dictionary=as_dict) as cursor:
                 cursor.execute(query, params or [])
-                result = cursor.fetchall() if fetch_all else cursor.fetchone()
-                print("✅ Query executed successfully")
-                return result
-    except mysql.connector.Error as err:
-        st.error(f"Database error: {err}")
+                return cursor.fetchall() if fetch_all else cursor.fetchone()
+    except Exception as e:
+        print(f"⚠️ Database error: {e}")
         return [] if fetch_all else None
-    finally:
-        print("🔴 Connection should now be closed")  # ✅ Debug log
 
 
 
 
 
 
-@st.cache_data
+# Cache database results to reduce database load
+@st.cache_data(ttl=600)  # Cache for 10 minutes
 def get_unique_values(column):
     query = f"SELECT DISTINCT `{column}` FROM newtable ORDER BY `{column}`"
     result = execute_query(query)
     return [row[0] for row in result] if result else []
 
-@st.cache_data
+@st.cache_data(ttl=300)  # Cache for 5 minutes
 def search_data(keyword, agency, procurement_method, fiscal_quarter, job_titles, headcount):
     query = "SELECT * FROM newtable WHERE 1=1"
     params = []
