@@ -10,7 +10,7 @@ import schedule
 import time
 from datetime import datetime
 from contextlib import contextmanager
-
+import requests
 st.set_page_config(layout="wide")
 target_tz = pytz.timezone('America/New_York')
 CONNECTION_POOL_LOCK = threading.Lock()
@@ -86,19 +86,26 @@ def run_scraper():
                 from scrapper_mysql import scraper
 
                 conn = get_connection_pool().get_connection()
+                
+                url = "https://cn5o4mjltksnugq64yokmgt74q0psrik.lambda-url.us-east-2.on.aws/"
                 try:
-                    scraper(conn)                    
-                except Exception as e:
+                    response = requests.get(url)
                     
-                    st.error(f"Scraper error: {e}")
-                finally:
+                except Exception as e:
+                    print("Error calling Lambda:", e)
+                # try:
+                #     scraper(conn)                    
+                # except Exception as e:
+                    
+                #     st.error(f"Scraper error: {e}")
+                # finally:
 
-                    if conn:
-                        try:
-                            conn.close()
-                            print("Scraper connection closed")
-                        except Exception as e:
-                            print(f"Error closing scraper connection: {e}")
+                #     if conn:
+                #         try:
+                #             conn.close()
+                #             print("Scraper connection closed")
+                #         except Exception as e:
+                #             print(f"Error closing scraper connection: {e}")
             except Exception as e:
                 print(f"Error closing scraper connection: {e}")
 
