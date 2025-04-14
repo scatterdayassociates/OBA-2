@@ -33,7 +33,7 @@ SCRAPER_LOCK = threading.Lock()
 # Optimized pool config for faster initial connection
 POOL_CONFIG = {
     "pool_name": "mypool",
-    "pool_size": 2,  # Reduced further from 3 to 2
+    "pool_size": 5,  # Reduced further from 3 to 2
     "pool_reset_session": False,  # Changed from True to avoid unnecessary overhead
     "autocommit": True,
     "use_pure": False,  # Changed from True for better performance
@@ -46,6 +46,7 @@ POOL_CONFIG = {
 # ============ DATABASE OPERATIONS ============
 
 # 2. Implement lazy connection initialization
+@st.cache_resource(show_spinner="Connecting to database...", ttl=360000)
 def get_connection_pool():
     """Singleton pattern with lazy initialization for connection pool"""
     global CONNECTION_POOL
