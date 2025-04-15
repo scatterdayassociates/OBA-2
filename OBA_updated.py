@@ -126,7 +126,7 @@ def execute_query(query: str, params=None, fetch_all=True, as_dict=False) -> Uni
                 return cursor.fetchall() if fetch_all else cursor.fetchone()
             return [] if fetch_all else None
     except Exception as e:
-        
+        st.error(f"❌ Database query failed: {e}")
         return [] if fetch_all else None
 
 # Create and optimize database indexes
@@ -549,93 +549,124 @@ def main():
             run_scraper()
         st.success("Award update complete!")
 
-    if st.session_state.show_results and not st.session_state.results.empty:
-        st.write(f"Found {len(st.session_state.results)} results:")
-        total_results = len(st.session_state.results)
-
-        # Get current page from session or default to 1
-        current_page = st.session_state.get("results_page", 1)
-
-        # Calculate start and end indices
-        start_idx = (current_page - 1) * PAGE_SIZE
-        end_idx = min(start_idx + PAGE_SIZE, total_results)
-
-        # Paginate the data
-        current_page_results = st.session_state.results.iloc[start_idx:end_idx]
-
-        st.write(f"Showing results {start_idx + 1} to {end_idx} of {total_results}:")
-
-        # Add checkbox column
-        select_column = pd.DataFrame({'Select': False}, index=current_page_results.index)
-        results_with_checkbox = pd.concat([select_column, current_page_results], axis=1)
-
-        # Render editable data editor
-        edited_df = st.data_editor(
-            results_with_checkbox,
-            hide_index=True,
-            column_config={"Select": st.column_config.CheckboxColumn("Select", default=False)},
-            disabled=results_with_checkbox.columns.drop('Select').tolist(),
-            key="editable_dataframe",
-            use_container_width=True,
-        )
-
-        # Track selections
-        current_selection = set(edited_df[edited_df['Select']].index)
-        new_selections = current_selection - st.session_state.previous_selection
-        deselections = st.session_state.previous_selection - current_selection
-
-        if not st.session_state.selected_rows.empty:
-            new_rows = edited_df.loc[list(new_selections)].drop(columns=['Select'])
-            st.session_state.selected_rows = pd.concat(
-                [st.session_state.selected_rows, new_rows], ignore_index=True
-            )
-            st.session_state.selected_rows = st.session_state.selected_rows[
-                ~st.session_state.selected_rows.index.isin(deselections)
-            ]
+    if st.session_state.show_results:
+        if st.session_state.results.empty:
+            st.warning("No result found")
         else:
-            st.session_state.selected_rows = edited_df.loc[list(new_selections)].drop(columns=['Select'])
+            st.write(f"Found {len(st.session_state.results)} results:")
+            total_results = len(st.session_state.results)
 
-        st.session_state.previous_selection = current_selection
-        new_page = pagination_ui(total_results, PAGE_SIZE, key="results")
-        if new_page != current_page:
-            st.session_state.results_page = new_page
-            st.rerun()
+            # Get current page from session or default to 1
+            current_page = st.session_state.get("results_page", 1)
+
+            # Calculate start and end indices
+            start_idx = (current_page - 1) * PAGE_SIZE
+            end_idx = min(start_idx + PAGE_SIZE, total_results)
+
+            # Paginate the data
+            current_page_results = st.session_state.results.iloc[start_idx:end_idx]
+
+            st.write(f"Showing results {start_idx + 1} to {end_idx} of {total_results}:")
+
+            # Add checkbox column
+            select_column = pd.DataFrame({'Select': False}, index=current_page_results.index)
+            results_with_checkbox = pd.concat([select_column, current_page_results], axis=1)
+
+            # Render editable data editor
+            edited_df = st.data_editor(
+                results_with_checkbox,
+                hide_index=True,
+                column_config={"Select": st.column_config.CheckboxColumn("Select", default=False)},
+                disabled=results_with_checkbox.columns.drop('Select').tolist(),
+                key="editable_dataframe",
+                use_container_width=True,
+            )
+
+            # Track selections
+            current_selection = set(edited_df[edited_df['Select']].index)
+            new_selections = current_selection - st.session_state.previous_selection
+            deselections = st.session_state.previous_selection - current_selection
+
+            if not st.session_state.selected_rows.empty:
+                new_rows = edited_df.loc[list(new_selections)].drop(columns=['Select'])
+                st.session_state.selected_rows = pd.concat(
+                    [st.session_state.selected_rows, new_rows], ignore_index=True
+                )
+                st.session_state.selected_rows = st.session_state.selected_rows[
+                    ~st.session_state.selected_rows.index.isin(deselections)
+                ]
+            else:
+                st.session_state.selected_rows = edited_df.loc[list(new_selections)].drop(columns=['Select'])
+
+            st.session_state.previous_selection = current_selection
             
-        if not st.session_state.selected_rows.empty:
-            st.write("User Selected Records:")
-            st.dataframe(st.session_state.selected_rows, hide_index=True)
-
+            # Render pagination UI and handle page change
+            new_page = pagination_ui(total_results, PAGE_SIZE, key="results")
+            if new_page != current_page:
+                st.session_state.results_page = new_page
+                st.rerun()
+                
+            if not st.session_state.selected_rows.empty:
+                st.write("User Selected Records:")
+                st.dataframe(st.session_state.selected_rows, hide_index=True)
         # Render pagination UI and handle page change
         
 
     if st.session_state.show_awards and filters_applied:
         st.markdown("Fiscal Year 2025 NYC Government Procurement Awards")
         
-        # Using our improved execute_query function 
-        query = "SELECT * FROM nycproawards4"
-        awards_data = execute_query(query, as_dict=True)
+        # Build query using standard indexes
+        where_clauses = []
+        params = []
+        
+        # Use traditional LIKE query instead of FULLTEXT
+        if keyword:
+            where_clauses.append("(Title LIKE %s OR Description LIKE %s)")
+            params.extend([f"%{keyword}%", f"%{keyword}%"])  # Add parameters for both columns
+        
+        if agency:
+            # Use idx_award_agency index
+            where_clauses.append("Agency = %s")
+            params.append(agency)
+            
+        # Use the idx_award_date index for sorting
+        order_clause = "ORDER BY `Award Date` DESC"
+        
+        # Build the query with WHERE clause if filters exist
+        if where_clauses:
+            query = f"SELECT * FROM nycproawards4 WHERE {' AND '.join(where_clauses)} {order_clause} LIMIT 500"
+        else:
+            query = f"SELECT * FROM nycproawards4 {order_clause} LIMIT 500"
+        
+        # Execute query
+        awards_data = execute_query(query, params, as_dict=True)
         df_awards = pd.DataFrame(awards_data) if awards_data else pd.DataFrame()
         
-        st.dataframe(df_awards, use_container_width=True)
+        if df_awards.empty:
+            st.warning("No result found")
+        else:
+            st.dataframe(df_awards, use_container_width=True)
 
-        if st.session_state.show_matches and not st.session_state.selected_rows.empty and keyword:
-            st.markdown("Keyword Matches")
-            keyword_processor = KeywordProcessor()
-            keyword_processor.add_keyword(keyword)
+            if st.session_state.show_matches and not st.session_state.selected_rows.empty and keyword:
+                st.markdown("Keyword Matches")
+                keyword_processor = KeywordProcessor()
+                keyword_processor.add_keyword(keyword)
 
-            matched_rows = []
-            for _, row in st.session_state.selected_rows.iterrows():
-                if keyword_processor.extract_keywords(row['Services Descrption']):
-                    matched_rows.append(row)
+                matched_rows = []
+                for _, row in st.session_state.selected_rows.iterrows():
+                    if 'Services Descrption' in row and pd.notna(row['Services Descrption']):
+                        if keyword_processor.extract_keywords(str(row['Services Descrption'])):
+                            matched_rows.append(row)
 
-            for _, row in df_awards.iterrows():
-                if keyword_processor.extract_keywords(row['Title']):
-                    matched_rows.append(row)
+                for _, row in df_awards.iterrows():
+                    if 'Title' in row and pd.notna(row['Title']):
+                        if keyword_processor.extract_keywords(str(row['Title'])):
+                            matched_rows.append(row)
 
-            if matched_rows:
-                st.dataframe(pd.DataFrame(matched_rows))
-            else:
-                st.write("No keyword matches found.")
+                if matched_rows:
+                    st.dataframe(pd.DataFrame(matched_rows))
+                else:
+                    st.warning("No result found")
     
     if st.session_state.show_results and st.session_state.show_awards and 'df_awards' in locals():
         combined_df = pd.concat([st.session_state.results, df_awards], ignore_index=True)
