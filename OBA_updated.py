@@ -127,7 +127,7 @@ def execute_query(query: str, params=None, fetch_all=True, as_dict=False) -> Uni
                 return cursor.fetchall() if fetch_all else cursor.fetchone()
             return [] if fetch_all else None
     except Exception as e:
-        st.error(f"⚠️ Database error: {e}")
+        
         return [] if fetch_all else None
 
 # Create and optimize database indexes
@@ -205,12 +205,14 @@ def search_data_all(keyword: str, agency: str, procurement_method: str,
     # Build optimized query based on provided filters
     # Order matters for index usage - put the most selective conditions first
     
+    # In search_data_all function
     if keyword:
-        # FULLTEXT is generally faster for text searches
         try:
+            # Try FULLTEXT search first
             where_clauses.append("MATCH(`Services Descrption`) AGAINST (%s IN BOOLEAN MODE)")
             params.append(f"{keyword}*")
         except mysql.connector.Error:
+            # Fall back to LIKE search if FULLTEXT fails
             where_clauses.append("`Services Descrption` LIKE %s")
             params.append(f"%{keyword}%")
     
@@ -265,7 +267,7 @@ def search_data_all(keyword: str, agency: str, procurement_method: str,
     result = execute_query(final_query, params, as_dict=True)
     return pd.DataFrame(result) if result else pd.DataFrame()
 
-@st.cache_data(ttl=600, show_spinner="Searching procurement awards...")
+@st.cache_data(ttl=40600, show_spinner="Searching procurement awards...")
 def search_proawards(keyword: str, page: int = 1, page_size: int = 50) -> Tuple[pd.DataFrame, int]:
     """Search procurement awards table with pagination and improved performance"""
     if not keyword:
@@ -356,11 +358,23 @@ def pagination_ui(total_items: int, page_size: int = PAGE_SIZE, key: str = "pagi
     
     current_page = st.session_state[f"{key}_page"]
     
-    # Create UI with better layout
-    col1, col2, col3 = st.columns([1, 5, 1])
+    # Create UI with columns taking entire width
+    # Use custom CSS to make the columns take full width
+    st.markdown("""
+        <style>
+        [data-testid="stHorizontalBlock"] {
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    # Define columns with proper width proportions
+    col1, col2, col3 = st.columns([1, 10, 1])
     
     with col1:
-        if st.button("← Previous", key=f"{key}_prev", disabled=current_page <= 1):
+        if st.button("← Previous", key=f"{key}_prev", disabled=current_page <= 1, use_container_width=True):
             st.session_state[f"{key}_page"] -= 1
             st.rerun()
     
@@ -369,7 +383,7 @@ def pagination_ui(total_items: int, page_size: int = PAGE_SIZE, key: str = "pagi
         st.markdown(f"<h6 style='text-align: center;'>Page {current_page} of {total_pages}</h6>", unsafe_allow_html=True)
     
     with col3:
-        if st.button("Next →", key=f"{key}_next", disabled=current_page >= total_pages):
+        if st.button("Next →", key=f"{key}_next", disabled=current_page >= total_pages, use_container_width=True):
             st.session_state[f"{key}_page"] += 1
             st.rerun()
     
@@ -549,7 +563,7 @@ def main():
     st.sidebar.header("Search Filters")
     default_value = "" if st.session_state.get('reset_trigger', False) else st.session_state.get('keyword', "")
     default_index = 0 if st.session_state.get('reset_trigger', False) else None
-    col1, col2 = st.sidebar.columns([8, 1])
+    col1, col2 = st.sidebar.columns([6, 1])
     with col1:
             keyword = st.text_input(
                 "Keyword Search (Services Description)",
@@ -557,7 +571,7 @@ def main():
                 key="keyword"
             )
     with col2:
-            st.write("") 
+            st.markdown("<div style='margin-top: 27px;'></div>", unsafe_allow_html=True)
             st.button("X", on_click=reset_search, key="reset_keyword")
     # Search form in sidebar
 
