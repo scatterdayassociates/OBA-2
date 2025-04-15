@@ -8,6 +8,7 @@ import pytz
 import threading
 import schedule
 import time
+from flashtext import KeywordProcessor
 from datetime import datetime
 from contextlib import contextmanager
 import requests
@@ -29,17 +30,15 @@ CONNECTION_POOL_LOCK = threading.Lock()
 CONNECTION_POOL = None
 SCRAPER_LOCK = threading.Lock()
 
-# Optimized pool config (reduced size for faster initial connection)
-# Optimized pool config for faster initial connection
 POOL_CONFIG = {
     "pool_name": "mypool",
-    "pool_size": 5,  # Reduced further from 3 to 2
-    "pool_reset_session": False,  # Changed from True to avoid unnecessary overhead
+    "pool_size": 5,  
+    "pool_reset_session": False, 
     "autocommit": True,
-    "use_pure": False,  # Changed from True for better performance
-    "connection_timeout": 3,  # Reduced timeout from 5 to 3 seconds
-    "consume_results": True , # Add this to automatically consume results
-    "ssl_disabled": True  # add this to db_config
+    "use_pure": False,  
+    "connection_timeout": 3,  
+    "consume_results": True ,
+    "ssl_disabled": True  
 
 }
 
@@ -194,77 +193,26 @@ def get_unique_values(column: str) -> List[str]:
 @st.cache_data(ttl=36000, show_spinner="Searching...")
 def search_data_all(keyword: str, agency: str, procurement_method: str, 
                    fiscal_quarter: str, job_titles: str) -> pd.DataFrame:
-    """
-    Search the main contracts table with optimized indexing
-    """
-    # Start with a basic query
-    query_parts = ["SELECT * FROM newtable"]
-    where_clauses = []
+    query = "SELECT * FROM newtable WHERE 1=1"
     params = []
     
-    # Build optimized query based on provided filters
-    # Order matters for index usage - put the most selective conditions first
-    
-    # In search_data_all function
     if keyword:
-        try:
-            # Try FULLTEXT search first
-            where_clauses.append("MATCH(`Services Descrption`) AGAINST (%s IN BOOLEAN MODE)")
-            params.append(f"{keyword}*")
-        except mysql.connector.Error:
-            # Fall back to LIKE search if FULLTEXT fails
-            where_clauses.append("`Services Descrption` LIKE %s")
-            params.append(f"%{keyword}%")
-    
-    # Add other filters - order by selectivity
-     # First handle exact matches (best for indexes)
-    filter_conditions = []
-    
+        query += " AND `Services Descrption` LIKE %s"
+        params.append(f"%{keyword}%")
     if agency:
-        filter_conditions.append(("Agency = %s", agency))
+        query += " AND Agency = %s"
+        params.append(agency)
     if procurement_method:
-        filter_conditions.append(("`Procurement Method` = %s", procurement_method))
+        query += " AND `Procurement Method` = %s"
+        params.append(procurement_method)
     if fiscal_quarter:
-        filter_conditions.append(("`Fiscal Quarter` = %s", fiscal_quarter))
+        query += " AND `Fiscal Quarter` = %s"
+        params.append(fiscal_quarter)
     if job_titles:
-        filter_conditions.append(("`Job Titles` = %s", job_titles))
+        query += " AND `Job Titles` = %s"
+        params.append(job_titles)
     
-    # Sort filters by selectivity (put most selective first)
-    # This helps MySQL choose the right index
-    for condition, value in filter_conditions:
-        where_clauses.append(condition)
-        params.append(value)
-    
-    # Handle fulltext search last (or first if it's very selective)
-    if keyword:
-        # Use MATCH AGAINST for better performance with fulltext index
-        try:
-            # Only use FULLTEXT if we have a proper term (not just wildcards)
-            clean_keyword = keyword.strip()
-            if len(clean_keyword) >= 3:  # MySQL requires min 3 chars for FULLTEXT
-                where_clauses.append("MATCH(`Services Descrption`) AGAINST (%s IN BOOLEAN MODE)")
-                params.append(f"{clean_keyword}*")
-            else:
-                # Fall back to LIKE for very short terms
-                where_clauses.append("`Services Descrption` LIKE %s")
-                params.append(f"%{clean_keyword}%")
-        except Exception:
-            where_clauses.append("`Services Descrption` LIKE %s")
-            params.append(f"%{keyword}%")
-    
-    if where_clauses:
-        query_parts.append("WHERE " + " AND ".join(where_clauses))
-    
-    # Add LIMIT to prevent slow queries
-    query_parts.append("LIMIT 1000")
-    
-    # Execute the query
-    final_query = " ".join(query_parts)
-    
-    # For debugging: check if indexes are being used
-    # check_index_usage(final_query, params)
-    
-    result = execute_query(final_query, params, as_dict=True)
+    result = execute_query(query, params, as_dict=True)
     return pd.DataFrame(result) if result else pd.DataFrame()
 
 @st.cache_data(ttl=40600, show_spinner="Searching procurement awards...")
@@ -488,81 +436,48 @@ def get_all_dropdown_values():
 # ============ MAIN APPLICATION ============
 
 def main():
-    """Main application function with improved organization"""
-    # Initialize session state variables
-    if 'primary_page' not in st.session_state:
-        st.session_state.primary_page = 1
-    if 'awards_page' not in st.session_state:
-        st.session_state.awards_page = 1
-    if 'reset_trigger' not in st.session_state:
-        st.session_state.reset_trigger = False
-    if 'search_clicked' not in st.session_state:
-        st.session_state.search_clicked = False
-    if 'show_results' not in st.session_state:
-        st.session_state.show_results = False
-    if 'show_awards' not in st.session_state:
-        st.session_state.show_awards = False
-    if 'results' not in st.session_state:
-        st.session_state.results = pd.DataFrame()
-
-    # Initialize database and background tasks
-    if "indexes_created" not in st.session_state:
-        with st.spinner("Optimizing database performance..."):
-            create_indexes()
-        st.session_state.indexes_created = True
-
+    # Test connection once using our new connection manager
     if "connection_tested" not in st.session_state:
         st.session_state["connection_tested"] = True
+        # Initializing the connection pool will automatically verify the connection
         get_connection_pool()
-
+    
+    # Start scheduler thread only once
     if "scheduler_thread_started" not in st.session_state:
         st.session_state["scheduler_thread_started"] = True
         schedule.every().day.at("21:05").do(run_scraper)
         scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
         scheduler_thread.start()
 
-    for var in ['primary_page', 'awards_page', 'reset_trigger', 'search_clicked', 
-                'show_results', 'show_awards', 'results']:
-        if var not in st.session_state:
-            st.session_state[var] = 1 if var.endswith('_page') else (
-                pd.DataFrame() if var == 'results' else False)
-    # Application header
+    if 'reset_trigger' not in st.session_state:
+        st.session_state.reset_trigger = False
+
+    if 'search_clicked' not in st.session_state:
+        st.session_state.search_clicked = False
+    if 'show_results' not in st.session_state:
+        st.session_state.show_results = False
+    if 'show_awards' not in st.session_state:
+        st.session_state.show_awards = False
+    if 'show_matches' not in st.session_state:
+        st.session_state.show_matches = False
+    if 'results' not in st.session_state:
+        st.session_state.results = pd.DataFrame()
+    if 'selected_rows' not in st.session_state:
+        st.session_state.selected_rows = pd.DataFrame()
+    if 'previous_selection' not in st.session_state:
+        st.session_state.previous_selection = set()
+
     st.title("NYC Procurement Intelligence")
     st.markdown(
-        "<h5 style='text-align: left; color: #636363;'>Pinpoint Commercial Opportunities with the City of New York</h5>",
+        "<h5 style='text-align: left; color: #888888;'>Pinpoint Commercial Opportunities with the City of New York</h5>",
         unsafe_allow_html=True,
     )
-    
-    # Current date display
-    now = datetime.now(TARGET_TZ)
-    formatted_date = now.strftime("%A, %B %d, %Y, %I:%M %p EDT")
-    st.markdown(f"<p style='text-align:right; color: #636363;'>{formatted_date}</p>", unsafe_allow_html=True)
-    if "initialization_started" not in st.session_state:
-        st.session_state.initialization_started = True
-        
-        # Start a background thread for all initialization tasks
-        def background_init():
-            # Schedule the scraper
-            schedule.every().day.at("21:05").do(run_scraper)
-            scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-            scheduler_thread.start()
-            
-            # Create indexes in background
-            create_indexes()
-            
-            # Mark indexes as created
-            st.session_state.indexes_created = True
-            
-        # Start all initialization in background
-        threading.Thread(target=background_init, daemon=True).start()
-
-    
-
-    # Sidebar setup
     st.sidebar.image("image001.png", use_container_width=True)
     st.sidebar.header("Search Filters")
+
     default_value = "" if st.session_state.get('reset_trigger', False) else st.session_state.get('keyword', "")
     default_index = 0 if st.session_state.get('reset_trigger', False) else None
+    
     col1, col2 = st.sidebar.columns([6, 1])
     with col1:
             keyword = st.text_input(
@@ -573,207 +488,167 @@ def main():
     with col2:
             st.markdown("<div style='margin-top: 27px;'></div>", unsafe_allow_html=True)
             st.button("X", on_click=reset_search, key="reset_keyword")
-    # Search form in sidebar
+    
+    agency = st.sidebar.selectbox(
+        "Agency",
+        [""] + get_unique_values("Agency"),
+        index=default_index,
+        key="agency"
+    )
+    
+    procurement_method = st.sidebar.selectbox(
+        "Procurement Method",
+        [""] + get_unique_values("Procurement Method"),
+        index=default_index,
+        key="procurement_method"
+    )
+    
+    fiscal_quarter = st.sidebar.selectbox(
+        "Fiscal Quarter",
+        [""] + get_unique_values("Fiscal Quarter"),
+        index=default_index,
+        key="fiscal_quarter"
+    )
+    
+    job_titles = st.sidebar.selectbox(
+        "Job Titles",
+        [""] + get_unique_values("Job Titles"),
+        index=default_index,
+        key="job_titles"
+    )
+    
+    
 
-
-
-    with st.sidebar.form(key="search_form"):
-        default_value = "" if st.session_state.get('reset_trigger', False) else st.session_state.get('keyword', "")
-        default_index = 0 if st.session_state.get('reset_trigger', False) else None
-        
-        
-        dropdown_values = get_all_dropdown_values()
-
-        agency = st.selectbox(
-            "Agency",
-            [""] + dropdown_values["Agency"],
-            index=default_index,
-            key="agency"
-        )
-        
-        procurement_method = st.selectbox(
-            "Procurement Method",
-            [""] + dropdown_values["Procurement Method"],
-            index=default_index,
-            key="procurement_method"
-        )
-        
-        fiscal_quarter = st.selectbox(
-            "Fiscal Quarter",
-            [""] + dropdown_values["Fiscal Quarter"],
-            index=default_index,
-            key="fiscal_quarter"
-        )
-        
-        job_titles = st.selectbox(
-            "Job Titles",
-            [""] + dropdown_values["Job Titles"],
-            index=default_index,
-            key="job_titles"
-        )
-
-        # Search and reset buttons
-        col1, col2 = st.columns(2)
-        with col1:
-            search_submitted = st.form_submit_button("Search", use_container_width=True)
-        with col2:
-            reset_submitted = st.form_submit_button("Reset", use_container_width=True)
-        
-        if reset_submitted:
-            reset_all_states()
-            st.rerun()
-
-    # Separate action buttons
-    if st.sidebar.button("Update Awards Data", use_container_width=True):
-        success = run_scraper()
-        if success:
-            st.sidebar.success("Award data updated successfully!")
-        else:
-            st.sidebar.error("Failed to update award data. Please try again later.")
-
-    # Reset session state reset_trigger if needed
     if st.session_state.get('reset_trigger', False):
         st.session_state.reset_trigger = False
 
-    # Process search when submitted
     filters_applied = any([keyword, agency, procurement_method, fiscal_quarter, job_titles])
-    
-    if search_submitted:
+
+    if st.sidebar.button("Search"):
         if filters_applied:
             st.session_state.search_clicked = True
             st.session_state.show_results = True
             st.session_state.show_awards = True
-            
-            # Reset to first page on new search
-            st.session_state.primary_page = 1
-            st.session_state.awards_page = 1
-            
-            # Search for primary contracts
-            results_df = search_data_all(
+            st.session_state.show_matches = True
+            st.session_state.results = search_data_all(
                 keyword, agency, procurement_method, fiscal_quarter, job_titles
             )
-            st.session_state.results = results_df
-            
-            # Search for procurement awards if keyword provided
-            if keyword:
-                awards_df, awards_count = search_proawards(
-                    keyword, 
-                    page=1,
-                    page_size=PAGE_SIZE
-                )
-                st.session_state.proawards_results = awards_df
-                st.session_state.awards_count = awards_count
-            else:
-                st.session_state.proawards_results = pd.DataFrame()
-                st.session_state.awards_count = 0
         else:
             st.warning("Please apply at least one filter before searching.")
             st.session_state.show_results = False
             st.session_state.show_awards = False
+            st.session_state.show_matches = False
 
-    # Display search results
-    if st.session_state.search_clicked and filters_applied:
-        # Handle no results case
-        if st.session_state.results.empty and (not hasattr(st.session_state, 'proawards_results') or st.session_state.proawards_results.empty):
-            st.warning("There are no results for this search. Please try different keywords or filters.")
-        
-        # Display primary contract matches
-        if st.session_state.show_results and not st.session_state.results.empty:
-            with st.expander("Primary Contract Matches", expanded=True):
-                st.write(f"Found {len(st.session_state.results)} matching contracts")
-                
-                # Get paginated data for display
-                total_primary_count = len(st.session_state.results)
-                current_primary_page = st.session_state.primary_page
-                start_idx = (current_primary_page - 1) * PAGE_SIZE
-                end_idx = min(start_idx + PAGE_SIZE, total_primary_count)
-                
-                # Get subset of data for current page and format it
-                current_page_data = st.session_state.results.iloc[start_idx:end_idx].copy()
-                display_data = format_dataframe_for_display(current_page_data)
-                
-                # Display the formatted data
-                st.dataframe(
-                    display_data,
-                    hide_index=True,
-                    use_container_width=True,
-                )
-                
-                # Show pagination controls
-                new_page = pagination_ui(
-                    total_primary_count, 
-                    PAGE_SIZE, 
-                    key="primary"
-                )
-                
-                # Handle page change if needed
-                if new_page != current_primary_page:
-                    st.session_state.primary_page = new_page
-                    st.rerun()
-        
-        # Display procurement awards
-        if st.session_state.show_awards and hasattr(st.session_state, 'proawards_results') and not st.session_state.proawards_results.empty:
-            with st.expander("Procurement Awards", expanded=True):
-                awards_count = st.session_state.awards_count
-                st.write(f"Found {awards_count} matching procurement awards")
-                
-                # Get current page of procurement awards
-                current_awards_page = st.session_state.awards_page
-                display_awards = format_dataframe_for_display(st.session_state.proawards_results)
-                
-                # Show awards data
-                st.dataframe(
-                    display_awards,
-                    hide_index=True,
-                    use_container_width=True,
-                )
-                
-                # Show pagination for awards
-                new_awards_page = pagination_ui(
-                    awards_count,
-                    PAGE_SIZE,
-                    key="awards"
-                )
-                
-                # Handle awards page change
-                if new_awards_page != current_awards_page:
-                    st.session_state.awards_page = new_awards_page
-                    
-                    # Update data for new page
-                    awards_df, _ = search_proawards(
-                        st.session_state.keyword,
-                        page=new_awards_page,
-                        page_size=PAGE_SIZE
-                    )
-                    st.session_state.proawards_results = awards_df
-                    st.rerun()
-        
-        # Download button for combined data
-        dfs_to_combine = []
-        if not st.session_state.results.empty:
-            dfs_to_combine.append(st.session_state.results)
-        
-        if hasattr(st.session_state, 'proawards_results') and not st.session_state.proawards_results.empty:
-            dfs_to_combine.append(st.session_state.proawards_results)
-        
-        if dfs_to_combine:
-            combined_df = pd.concat(dfs_to_combine, ignore_index=True)
-            combined_df_filled = combined_df.fillna("N/A")
-            csv = combined_df_filled.to_csv(index=False).encode('utf-8')
+    if st.sidebar.button("Reset Search"):
+        reset_all_states()
+        st.rerun()
+
+    if st.sidebar.button("Update Awards Data"):
+        with st.spinner("Processing..."):
+            # Using the run_scraper function that properly manages connections
+            run_scraper()
+        st.success("Award update complete!")
+
+    if st.session_state.show_results and not st.session_state.results.empty:
+        st.write(f"Found {len(st.session_state.results)} results:")
+        total_results = len(st.session_state.results)
+
+        # Get current page from session or default to 1
+        current_page = st.session_state.get("results_page", 1)
+
+        # Calculate start and end indices
+        start_idx = (current_page - 1) * PAGE_SIZE
+        end_idx = min(start_idx + PAGE_SIZE, total_results)
+
+        # Paginate the data
+        current_page_results = st.session_state.results.iloc[start_idx:end_idx]
+
+        st.write(f"Showing results {start_idx + 1} to {end_idx} of {total_results}:")
+
+        # Add checkbox column
+        select_column = pd.DataFrame({'Select': False}, index=current_page_results.index)
+        results_with_checkbox = pd.concat([select_column, current_page_results], axis=1)
+
+        # Render editable data editor
+        edited_df = st.data_editor(
+            results_with_checkbox,
+            hide_index=True,
+            column_config={"Select": st.column_config.CheckboxColumn("Select", default=False)},
+            disabled=results_with_checkbox.columns.drop('Select').tolist(),
+            key="editable_dataframe",
+            use_container_width=True,
+        )
+
+        # Track selections
+        current_selection = set(edited_df[edited_df['Select']].index)
+        new_selections = current_selection - st.session_state.previous_selection
+        deselections = st.session_state.previous_selection - current_selection
+
+        if not st.session_state.selected_rows.empty:
+            new_rows = edited_df.loc[list(new_selections)].drop(columns=['Select'])
+            st.session_state.selected_rows = pd.concat(
+                [st.session_state.selected_rows, new_rows], ignore_index=True
+            )
+            st.session_state.selected_rows = st.session_state.selected_rows[
+                ~st.session_state.selected_rows.index.isin(deselections)
+            ]
+        else:
+            st.session_state.selected_rows = edited_df.loc[list(new_selections)].drop(columns=['Select'])
+
+        st.session_state.previous_selection = current_selection
+        new_page = pagination_ui(total_results, PAGE_SIZE, key="results")
+        if new_page != current_page:
+            st.session_state.results_page = new_page
+            st.rerun()
             
-            # Add download section
-            st.markdown("---")
-            col1, col2 = st.columns([6, 1])
-            with col1:
-                st.write("Export all search results to CSV file:")
-            with col2:
-                st.download_button(
-                    label="Download",
-                    data=csv,
-                    file_name=f'nyc_procurement_data_{datetime.now().strftime("%Y%m%d")}.csv',
-                    mime='text/csv',
-                    use_container_width=True
-                )
+        if not st.session_state.selected_rows.empty:
+            st.write("User Selected Records:")
+            st.dataframe(st.session_state.selected_rows, hide_index=True)
+
+        # Render pagination UI and handle page change
+        
+
+    if st.session_state.show_awards and filters_applied:
+        st.markdown("Fiscal Year 2025 NYC Government Procurement Awards")
+        
+        # Using our improved execute_query function 
+        query = "SELECT * FROM nycproawards4"
+        awards_data = execute_query(query, as_dict=True)
+        df_awards = pd.DataFrame(awards_data) if awards_data else pd.DataFrame()
+        
+        st.dataframe(df_awards, use_container_width=True)
+
+        if st.session_state.show_matches and not st.session_state.selected_rows.empty and keyword:
+            st.markdown("Keyword Matches")
+            keyword_processor = KeywordProcessor()
+            keyword_processor.add_keyword(keyword)
+
+            matched_rows = []
+            for _, row in st.session_state.selected_rows.iterrows():
+                if keyword_processor.extract_keywords(row['Services Descrption']):
+                    matched_rows.append(row)
+
+            for _, row in df_awards.iterrows():
+                if keyword_processor.extract_keywords(row['Title']):
+                    matched_rows.append(row)
+
+            if matched_rows:
+                st.dataframe(pd.DataFrame(matched_rows))
+            else:
+                st.write("No keyword matches found.")
+    
+    if st.session_state.show_results and st.session_state.show_awards and 'df_awards' in locals():
+        combined_df = pd.concat([st.session_state.results, df_awards], ignore_index=True)
+        combined_df_filled = combined_df.fillna("N/A")
+
+        csv = combined_df_filled.to_csv(index=False).encode('utf-8')
+
+        st.download_button(
+            label="Download Data Report",
+            data=csv,
+            file_name='combined_data.csv',
+            mime='text/csv',
+        )
 
 
 if __name__ == "__main__":
