@@ -32,7 +32,7 @@ SCRAPER_LOCK = threading.Lock()
 
 POOL_CONFIG = {
     "pool_name": "mypool",
-    "pool_size": 10,  
+    "pool_size": 5,  
     "pool_reset_session": False, 
     "autocommit": True,
     "use_pure": False,  
