@@ -32,7 +32,7 @@ SCRAPER_LOCK = threading.Lock()
 
 POOL_CONFIG = {
     "pool_name": "mypool",
-    "pool_size": 5,  
+    "pool_size": 10,  
     "pool_reset_session": False, 
     "autocommit": True,
     "use_pure": False,  
@@ -634,9 +634,9 @@ def main():
         
         # Build the query with WHERE clause if filters exist
         if where_clauses:
-            query = f"SELECT * FROM nycproawards4 WHERE {' AND '.join(where_clauses)} {order_clause} LIMIT 500"
+            query = f"SELECT * FROM nycproawards4 WHERE {' AND '.join(where_clauses)} {order_clause} "
         else:
-            query = f"SELECT * FROM nycproawards4 {order_clause} LIMIT 500"
+            query = f"SELECT * FROM nycproawards4 {order_clause} "
         
         # Execute query
         awards_data = execute_query(query, params, as_dict=True)
@@ -654,20 +654,18 @@ def main():
 
                 matched_rows = []
                 for _, row in st.session_state.selected_rows.iterrows():
-                    if 'Services Descrption' in row and pd.notna(row['Services Descrption']):
-                        if keyword_processor.extract_keywords(str(row['Services Descrption'])):
-                            matched_rows.append(row)
+                    if keyword_processor.extract_keywords(row['Services Descrption']):
+                        matched_rows.append(row)
 
                 for _, row in df_awards.iterrows():
-                    if 'Title' in row and pd.notna(row['Title']):
-                        if keyword_processor.extract_keywords(str(row['Title'])):
-                            matched_rows.append(row)
+                    if keyword_processor.extract_keywords(row['Title']):
+                        matched_rows.append(row)
 
                 if matched_rows:
                     st.dataframe(pd.DataFrame(matched_rows))
                 else:
-                    st.warning("No result found")
-    
+                    st.write("No keyword matches found.")
+        
     if st.session_state.show_results and st.session_state.show_awards and 'df_awards' in locals():
         combined_df = pd.concat([st.session_state.results, df_awards], ignore_index=True)
         combined_df_filled = combined_df.fillna("N/A")
