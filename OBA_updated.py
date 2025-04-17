@@ -338,16 +338,12 @@ def pagination_ui(total_items: int, page_size: int = PAGE_SIZE, key: str = "pagi
     return current_page
 
 # Separate authentication from db initialization
-def check_password() -> bool:
-    """User authentication without database connection dependency"""
+def check_password():
     def login_form():
-        with st.form("login_form"):
-            st.subheader("Login to NYC Procurement Intelligence")
+        with st.form("Credentials"):
             st.text_input("Username", key="username")
             st.text_input("Password", type="password", key="password")
-            submitted = st.form_submit_button("Log in", use_container_width=True)
-            if submitted:
-                password_entered()
+            st.form_submit_button("Log in", on_click=password_entered)
 
     def password_entered():
         if st.session_state["username"] in st.secrets["passwords"] and hmac.compare_digest(
@@ -364,7 +360,7 @@ def check_password() -> bool:
         return True
 
     login_form()
-    if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+    if "password_correct" in st.session_state:
         st.error("😕 User not known or password incorrect")
     return False
 
