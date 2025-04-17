@@ -562,7 +562,7 @@ def main():
 
             # Paginate the data
             current_page_results = st.session_state.results.iloc[start_idx:end_idx]
-
+            st.subheader("Citywide Procurement Opportunities")
             st.write(f"Showing results {start_idx + 1} to {end_idx} of {total_results}:")
 
             # Add checkbox column
@@ -637,6 +637,7 @@ def main():
         
         # Execute query
         awards_data = execute_query(query, params, as_dict=True)
+        print(awards_data)
         df_awards = pd.DataFrame(awards_data) if awards_data else pd.DataFrame()
         
         
@@ -644,7 +645,7 @@ def main():
             st.warning("No result found")
         else:
             df_awards['Description'] = df_awards['Description'].astype(str)
-
+        
             st.dataframe(
                     df_awards,
                     use_container_width=True,
@@ -652,26 +653,41 @@ def main():
                         "Description": st.column_config.TextColumn(
                             "Description", 
                             width="large",
+                            max_chars=-1
                         )
                     }
                 )
             
-            if st.session_state.show_matches and not st.session_state.selected_rows.empty and keyword:
-                st.markdown("Keyword Matches")
+            if st.session_state.show_matches and keyword:
+                st.subheader("Keyword Matches")
                 keyword_processor = KeywordProcessor()
                 keyword_processor.add_keyword(keyword)
 
-                matched_rows = []
-                for _, row in st.session_state.selected_rows.iterrows():
-                    if keyword_processor.extract_keywords(row['Services Descrption']):
-                        matched_rows.append(row)
+                # Initialize combined matches list
+                combined_matches = []
+                
+                # Add any selected rows that match the keyword
+                if not st.session_state.selected_rows.empty:
+                    for _, row in st.session_state.selected_rows.iterrows():
+                        if keyword_processor.extract_keywords(row['Services Descrption']):
+                            # Add source identifier
+                            row_dict = row.to_dict()
+                            row_dict['Source'] = 'Procurement Opportunities'
+                            combined_matches.append(row_dict)
 
-                for _, row in df_awards.iterrows():
-                    if keyword_processor.extract_keywords(row['Title']):
-                        matched_rows.append(row)
+                # Add any award matches
+                if not df_awards.empty:
+                    for _, row in df_awards.iterrows():
+                        if keyword_processor.extract_keywords(row['Title']) or keyword_processor.extract_keywords(row['Description']):
+                            # Add source identifier
+                            row_dict = row.to_dict()
+                            row_dict['Source'] = 'FY2025 Awards'
+                            combined_matches.append(row_dict)
 
-                if matched_rows:
-                    st.dataframe(pd.DataFrame(matched_rows))
+                # Display the combined matches
+                if combined_matches:
+                    combined_df = pd.DataFrame(combined_matches)
+                    st.dataframe(combined_df, use_container_width=True)
                 else:
                     st.write("No keyword matches found.")
         
