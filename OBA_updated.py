@@ -341,6 +341,7 @@ def pagination_ui(total_items: int, page_size: int = PAGE_SIZE, key: str = "pagi
 def check_password():
     def login_form():
         with st.form("Credentials"):
+            st.subheader("NYC Procurement Intelligence")
             st.text_input("Username", key="username")
             st.text_input("Password", type="password", key="password")
             st.form_submit_button("Log in", on_click=password_entered)
