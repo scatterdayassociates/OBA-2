@@ -644,14 +644,10 @@ def main():
             st.warning("No result found")
         else:
             df_awards['Description'] = df_awards['Description'].astype(str)
-            
-    
-            
-            
+
             st.dataframe(
                     df_awards,
                     use_container_width=True,
-                    height=600,
                     column_config={
                         "Description": st.column_config.TextColumn(
                             "Description", 
@@ -660,8 +656,6 @@ def main():
                     }
                 )
             
-            
-
             if st.session_state.show_matches and not st.session_state.selected_rows.empty and keyword:
                 st.markdown("Keyword Matches")
                 keyword_processor = KeywordProcessor()
