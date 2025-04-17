@@ -550,7 +550,7 @@ def main():
         if st.session_state.results.empty:
             st.warning("No result found")
         else:
-            st.write(f"Found {len(st.session_state.results)} results:")
+            st.write(f"Your Keyword Found {len(st.session_state.results)} results:")
             total_results = len(st.session_state.results)
 
             # Get current page from session or default to 1
@@ -610,7 +610,7 @@ def main():
         
 
     if st.session_state.show_awards and filters_applied:
-        st.markdown("Fiscal Year 2025 NYC Government Procurement Awards")
+        st.subheader("Fiscal Year 2025 NYC Government Procurement Awards")
         
         # Build query using standard indexes
         where_clauses = []
@@ -639,10 +639,28 @@ def main():
         awards_data = execute_query(query, params, as_dict=True)
         df_awards = pd.DataFrame(awards_data) if awards_data else pd.DataFrame()
         
+        
         if df_awards.empty:
             st.warning("No result found")
         else:
-            st.dataframe(df_awards, use_container_width=True)
+            df_awards['Description'] = df_awards['Description'].astype(str)
+            
+    
+            
+            
+            st.dataframe(
+                    df_awards,
+                    use_container_width=True,
+                    height=600,
+                    column_config={
+                        "Description": st.column_config.TextColumn(
+                            "Description", 
+                            width="large",
+                        )
+                    }
+                )
+            
+            
 
             if st.session_state.show_matches and not st.session_state.selected_rows.empty and keyword:
                 st.markdown("Keyword Matches")
