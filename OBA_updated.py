@@ -12,6 +12,7 @@ from flashtext import KeywordProcessor
 from datetime import datetime
 from contextlib import contextmanager
 import requests
+from scrapper_mysql import scraper
 import functools
 from typing import Dict, List, Tuple, Optional, Any, Union
 
@@ -170,13 +171,10 @@ def create_indexes():
 
 # Improved caching strategy with proper TTL
 # Cache unique values with longer TTL and pre-computed common values
-@st.cache_data(ttl=86400)  # Cache for 24 hours instead of 1 hour
+@st.cache_data(ttl=864000)  # Cache for 24 hours instead of 1 hour
 def get_unique_values(column: str) -> List[str]:
     """Get unique values for a column with optimized query and caching"""
-    # Pre-compute common values to avoid database queries
 
-    
-    # Optimize query with LIMIT clause to prevent full table scan
     query = f"""
         SELECT DISTINCT `{column}` 
         FROM newtable 
@@ -184,8 +182,6 @@ def get_unique_values(column: str) -> List[str]:
         ORDER BY `{column}`
         LIMIT 500
     """
-    
-   
     result = execute_query(query)
     return [row[0] for row in result] if result else []
     
@@ -283,6 +279,7 @@ def run_scraper():
                     # Call the AWS Lambda function to trigger the scraper
                     url = "https://cn5o4mjltksnugq64yokmgt74q0psrik.lambda-url.us-east-2.on.aws/"
                     response = requests.get(url, timeout=10)
+                    
                     return True
                 except requests.exceptions.RequestException as e:
                     st.error(f"Error calling scraper service: {e}")
@@ -484,7 +481,11 @@ def main():
             )
     with col2:
             st.markdown("<div style='margin-top: 27px;'></div>", unsafe_allow_html=True)
-            st.button("X", on_click=reset_search, key="reset_keyword")
+            
+            if st.button("X"):
+                reset_all_states()
+                st.rerun()
+            
     
     agency = st.sidebar.selectbox(
         "Agency",
@@ -536,10 +537,6 @@ def main():
             st.session_state.show_awards = False
             st.session_state.show_matches = False
 
-    if st.sidebar.button("Reset Search"):
-        reset_all_states()
-        st.rerun()
-
     if st.sidebar.button("Update Awards Data"):
         with st.spinner("Processing..."):
             # Using the run_scraper function that properly manages connections
@@ -550,7 +547,7 @@ def main():
         if st.session_state.results.empty:
             st.warning("No result found")
         else:
-            st.write(f"Your Keyword Found {len(st.session_state.results)} results:")
+            
             total_results = len(st.session_state.results)
 
             # Get current page from session or default to 1
@@ -563,6 +560,7 @@ def main():
             # Paginate the data
             current_page_results = st.session_state.results.iloc[start_idx:end_idx]
             st.subheader("Citywide Procurement Opportunities")
+            st.write(f"Your keyword search found {len(st.session_state.results)} results:")
             st.write(f"Showing results {start_idx + 1} to {end_idx} of {total_results}:")
 
             # Add checkbox column
@@ -637,7 +635,6 @@ def main():
         
         # Execute query
         awards_data = execute_query(query, params, as_dict=True)
-        print(awards_data)
         df_awards = pd.DataFrame(awards_data) if awards_data else pd.DataFrame()
         
         
