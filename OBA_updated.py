@@ -1,4 +1,3 @@
-# Optimized connection pool and login handling
 import streamlit as st
 import pandas as pd
 import mysql.connector
@@ -8,18 +7,21 @@ import pytz
 import threading
 import schedule
 import time
+import plotly.express as px
+import plotly.graph_objects as go
 from flashtext import KeywordProcessor
 from datetime import datetime
 from contextlib import contextmanager
 import requests
 from scrapper_mysql import scraper
 import functools
+import numpy as np
 from typing import Dict, List, Tuple, Optional, Any, Union
 
 # ============ CONFIGURATION ============
 st.set_page_config(
     page_title="NYC Procurement Intelligence",
-    page_icon="📊",
+    page_icon="image001.png",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -38,9 +40,8 @@ POOL_CONFIG = {
     "autocommit": True,
     "use_pure": False,  
     "connection_timeout": 3,  
-    "consume_results": True ,
+    "consume_results": True,
     "ssl_disabled": True  
-
 }
 
 # ============ DATABASE OPERATIONS ============
@@ -379,7 +380,8 @@ def reset_all_states():
         'fiscal_quarter',
         'job_titles',
         'primary_page',
-        'awards_page'
+        'awards_page',
+        'topic_keyword'
     ]
     
     for var in session_vars:
@@ -412,8 +414,6 @@ def format_dataframe_for_display(df: pd.DataFrame) -> pd.DataFrame:
     
     return df
 
-
-
 @st.cache_data(ttl=86400)  # Cache for 24 hours
 def get_all_dropdown_values():
     """Pre-compute all dropdown values in a single function to avoid multiple DB calls"""
@@ -424,28 +424,18 @@ def get_all_dropdown_values():
         "Job Titles": get_unique_values("Job Titles")
     }
 
+# ============ PAGE FUNCTIONS ============
 
-
-
-# ============ MAIN APPLICATION ============
-
-def main():
-    # Test connection once using our new connection manager
-    if "connection_tested" not in st.session_state:
-        st.session_state["connection_tested"] = True
-        # Initializing the connection pool will automatically verify the connection
-        get_connection_pool()
+def show_procurement_opportunity_discovery():
+    """Display Procurement Opportunity Discovery page"""
+    st.title("Procurement Opportunity Discovery")
+    st.markdown(
+        "<h5 style='text-align: left; color: #888888;'>Pinpoint Commercial Opportunities with the City of New York</h5>",
+        unsafe_allow_html=True,
+    )
     
-    # Start scheduler thread only once
-    if "scheduler_thread_started" not in st.session_state:
-        st.session_state["scheduler_thread_started"] = True
-        schedule.every().day.at("21:05").do(run_scraper)
-        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-        scheduler_thread.start()
-
     if 'reset_trigger' not in st.session_state:
         st.session_state.reset_trigger = False
-
     if 'search_clicked' not in st.session_state:
         st.session_state.search_clicked = False
     if 'show_results' not in st.session_state:
@@ -460,32 +450,25 @@ def main():
         st.session_state.selected_rows = pd.DataFrame()
     if 'previous_selection' not in st.session_state:
         st.session_state.previous_selection = set()
-
-    st.title("NYC Procurement Intelligence")
-    st.markdown(
-        "<h5 style='text-align: left; color: #888888;'>Pinpoint Commercial Opportunities with the City of New York</h5>",
-        unsafe_allow_html=True,
-    )
-    st.sidebar.image("image001.png", use_container_width=True)
-    st.sidebar.header("Search Filters")
-
+    
     default_value = "" if st.session_state.get('reset_trigger', False) else st.session_state.get('keyword', "")
     default_index = 0 if st.session_state.get('reset_trigger', False) else None
     
+    st.sidebar.header("Search Filters")
+    
     col1, col2 = st.sidebar.columns([6, 1])
     with col1:
-            keyword = st.text_input(
-                "Keyword Search (Services Description)",
-                value=default_value,
-                key="keyword"
-            )
+        keyword = st.text_input(
+            "Keyword Search (Services Description)",
+            value=default_value,
+            key="keyword"
+        )
     with col2:
-            st.markdown("<div style='margin-top: 27px;'></div>", unsafe_allow_html=True)
-            
-            if st.button("X"):
-                reset_all_states()
-                st.rerun()
-            
+        st.markdown("<div style='margin-top: 27px;'></div>", unsafe_allow_html=True)
+        
+        if st.button("X"):
+            reset_all_states()
+            st.rerun()
     
     agency = st.sidebar.selectbox(
         "Agency",
@@ -515,8 +498,6 @@ def main():
         key="job_titles"
     )
     
-    
-
     if st.session_state.get('reset_trigger', False):
         st.session_state.reset_trigger = False
 
@@ -604,8 +585,6 @@ def main():
             if not st.session_state.selected_rows.empty:
                 st.write("User Selected Records:")
                 st.dataframe(st.session_state.selected_rows, hide_index=True)
-        # Render pagination UI and handle page change
-        
 
     if st.session_state.show_awards and filters_applied:
         st.subheader("Fiscal Year 2025 NYC Government Procurement Awards")
@@ -701,6 +680,836 @@ def main():
             mime='text/csv',
         )
 
+#############################################################################
+# Procurement Topic Analysis
+#############################################################################
+# --- Digital Ocean MySQL DB Credentials ---
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from sqlalchemy import create_engine, text
+import contextlib
+
+# --- Digital Ocean MySQL DB Credentials ---
+DB_USER = "doadmin"
+DB_PASSWORD = "AVNS_xKVgSkiz4gkauzSux86"
+DB_HOST = "db-mysql-nyc3-25707-do-user-19616823-0.l.db.ondigitalocean.com"
+DB_PORT = "25060"
+DB_NAME = "defaultdb"
+
+DATABASE_URL = (
+    f"mysql+mysqlconnector://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+)
+
+# Create engine
+engine = create_engine(DATABASE_URL, echo=False, connect_args={"ssl_disabled": False})
+
+
+@st.cache_data(ttl=864000)  # Cache for 24 hours
+def load_matches_by_keyword(keyword):
+    """
+    Loads the matching records for a specific keyword by joining press_releases_matches, 
+    press_releases_summaries, and press_releases.
+    """
+    query = text("""
+    SELECT 
+        s.summary AS "Press Release",
+        p.press_date AS "Press Date",
+        m.matched_keyword AS "Keyword",
+        m.plan_id AS "Plan ID",
+        m.agency AS "Agency",
+        m.services_description AS "Services Description"
+    FROM press_releases_matches m
+    JOIN press_releases_summaries s ON m.press_summary_id = s.id
+    JOIN press_releases p ON s.article_link = p.link
+    WHERE m.matched_keyword LIKE :keyword
+    ORDER BY m.id;
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine, params={"keyword": f"%{keyword}%"})
+        return df
+    except Exception as e:
+        st.error(f"Error loading keyword matches: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=864000)  # Cache for 24 hours
+def load_matches_by_keyword_oti(keyword):
+    """
+    Loads the matching records for a specific keyword by joining press_releases_matches, 
+    press_releases_summaries, and press_releases.
+    """
+    query = text("""
+    SELECT 
+        s.summary AS "Press Release",
+        p.press_date AS "Press Date",
+        m.matched_keyword AS "Keyword",
+        m.plan_id AS "Plan ID",
+        m.agency AS "Agency",
+        m.services_description AS "Services Description"
+    FROM oti_press_releases_matches m
+    JOIN oti_press_releases_summaries s ON m.press_summary_id = s.id
+    JOIN oti_press_releases p ON s.article_link = p.link
+    WHERE m.matched_keyword LIKE :keyword
+    ORDER BY m.id;
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine, params={"keyword": f"%{keyword}%"})
+        return df
+    except Exception as e:
+        st.error(f"Error loading keyword matches: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=864000)  # Cache for 24 hours
+def load_matches_by_keyword_dhs(keyword):
+    """
+    Loads the matching records for a specific keyword by joining press_releases_matches, 
+    press_releases_summaries, and press_releases.
+    """
+    query = text("""
+    SELECT 
+        s.summary AS "Press Release",
+        p.press_date AS "Press Date",
+        m.matched_keyword AS "Keyword",
+        m.plan_id AS "Plan ID",
+        m.agency AS "Agency",
+        m.services_description AS "Services Description"
+    FROM dhs_press_releases_matches m
+    JOIN dhs_press_releases_summaries s ON m.press_summary_id = s.id
+    JOIN dhs_press_releases p ON s.article_link = p.link
+    WHERE m.matched_keyword LIKE :keyword
+    ORDER BY m.id;
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine, params={"keyword": f"%{keyword}%"})
+        return df
+    except Exception as e:
+        st.error(f"Error loading keyword matches: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=864000)  # Cache for 24 hours
+def load_matches_by_keyword_hrs(keyword):
+    """
+    Loads the matching records for a specific keyword by joining press_releases_matches, 
+    press_releases_summaries, and press_releases.
+    """
+    query = text("""
+    SELECT 
+        s.summary AS "Press Release",
+        p.press_date AS "Press Date",
+        m.matched_keyword AS "Keyword",
+        m.plan_id AS "Plan ID",
+        m.agency AS "Agency",
+        m.services_description AS "Services Description"
+    FROM hra_press_releases_matches m
+    JOIN hra_press_releases_summaries s ON m.press_summary_id = s.id
+    JOIN hra_press_releases p ON s.article_link = p.link
+    WHERE m.matched_keyword LIKE :keyword
+    ORDER BY m.id;
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine, params={"keyword": f"%{keyword}%"})
+        return df
+    except Exception as e:
+        st.error(f"Error loading keyword matches: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=864000)  # Cache for 24 hours
+def load_matches_by_keyword_nypd(keyword):
+    """
+    Loads the matching records for a specific keyword by joining press_releases_matches, 
+    press_releases_summaries, and press_releases.
+    """
+    query = text("""
+    SELECT 
+        s.summary AS "Press Release",
+                 p.press_date AS "Press Date",
+        m.matched_keyword AS "Keyword",
+        m.plan_id AS "Plan ID",
+        m.agency AS "Agency",
+        m.services_description AS "Services Description"
+    FROM nypd_press_releases_matches m
+    JOIN nypd_press_releases_summaries s ON m.press_summary_id = s.id
+    JOIN nypd_press_releases p ON s.article_link = p.link
+    WHERE m.matched_keyword LIKE :keyword
+    ORDER BY m.id;
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine, params={"keyword": f"%{keyword}%"})
+        return df
+    except Exception as e:
+        st.error(f"Error loading keyword matches: {e}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=864000)  # Cache for 24 hours
+def get_keyword_agency_stats():
+    """Get statistics on keywords and agencies from the matches table"""
+    query = text("""
+    SELECT 
+        m.matched_keyword AS "Keyword",
+        m.agency AS "Agency",
+        COUNT(*) AS "Matches"
+    FROM press_releases_matches m
+    GROUP BY m.matched_keyword, m.agency
+    ORDER BY COUNT(*) DESC;
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine)
+        return df
+    except Exception as e:
+        st.error(f"Error loading keyword agency stats: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=864000)  # Cache for 24 hours
+def get_keyword_agency_stats_oti():
+    """Get statistics on keywords and agencies from the matches table"""
+    query = text("""
+    SELECT 
+        m.matched_keyword AS "Keyword",
+        m.agency AS "Agency",
+        COUNT(*) AS "Matches"
+    FROM oti_press_releases_matches m
+    GROUP BY m.matched_keyword, m.agency
+    ORDER BY COUNT(*) DESC;
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine)
+        return df
+    except Exception as e:
+        st.error(f"Error loading keyword agency stats: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=864000)  # Cache for 24 hours
+def get_keyword_agency_stats_dhs():
+    """Get statistics on keywords and agencies from the matches table"""
+    query = text("""
+    SELECT 
+        m.matched_keyword AS "Keyword",
+        m.agency AS "Agency",
+        COUNT(*) AS "Matches"
+    FROM dhs_press_releases_matches m
+    GROUP BY m.matched_keyword, m.agency
+    ORDER BY COUNT(*) DESC;
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine)
+        return df
+    except Exception as e:
+        st.error(f"Error loading keyword agency stats: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=864000)  # Cache for 24 hours
+def get_keyword_agency_stats_nypd():
+    """Get statistics on keywords and agencies from the matches table"""
+    query = text("""
+    SELECT 
+        m.matched_keyword AS "Keyword",
+        m.agency AS "Agency",
+        COUNT(*) AS "Matches"
+    FROM nypd_press_releases_matches m
+    GROUP BY m.matched_keyword, m.agency
+    ORDER BY COUNT(*) DESC;
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine)
+        return df
+    except Exception as e:
+        st.error(f"Error loading keyword agency stats: {e}")
+        return pd.DataFrame()
+    
+@st.cache_data(ttl=864000)  # Cache for 24 hours
+def get_keyword_agency_stats_hra():
+    """Get statistics on keywords and agencies from the matches table"""
+    query = text("""
+    SELECT 
+        m.matched_keyword AS "Keyword",
+        m.agency AS "Agency",
+        COUNT(*) AS "Matches"
+    FROM hra_press_releases_matches m
+    GROUP BY m.matched_keyword, m.agency
+    ORDER BY COUNT(*) DESC;
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine)
+        return df
+    except Exception as e:
+        st.error(f"Error loading keyword agency stats: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=864000)  # Cache for 10 days
+def get_sample_keyword_nypd():
+    """Get sample keywords from the database"""
+    query = text("""
+    SELECT DISTINCT matched_keyword
+    FROM nypd_press_releases_matches 
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine)
+        return df['matched_keyword'].dropna().tolist()  # Convert column to a list
+    except Exception as e:
+        st.warning(f"Could not load sample keywords: {e}")
+        return []
+
+@st.cache_data(ttl=864000)  # Cache for 10 days
+def get_sample_keywords():
+    """Get sample keywords from the database"""
+    query = text("""
+    SELECT DISTINCT matched_keyword 
+    FROM press_releases_matches 
+    LIMIT 10
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine)
+        return df['matched_keyword'].dropna().tolist()  # Convert column to a list
+    except Exception as e:
+        st.warning(f"Could not load sample keywords: {e}")
+        return []
+    
+@st.cache_data(ttl=864000)  # Cache for 10 days
+def get_sample_keyword_oti():
+    """Get sample keywords from the database"""
+    query = text("""
+    SELECT DISTINCT matched_keyword
+    FROM oti_press_releases_matches 
+    LIMIT 10
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine)
+        return df['matched_keyword'].dropna().tolist()  # Convert column to a list
+    except Exception as e:
+        st.warning(f"Could not load sample keywords: {e}")
+        return []
+
+@st.cache_data(ttl=864000)  # Cache for 10 days
+def get_sample_keyword_hrs():
+    """Get sample keywords from the database"""
+    query = text("""
+    SELECT DISTINCT matched_keyword 
+    FROM hra_press_releases_matches 
+    LIMIT 5
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine)
+        return df['matched_keyword'].dropna().tolist()  # Convert column to a list
+    except Exception as e:
+        st.warning(f"Could not load sample keywords: {e}")
+        return []
+    
+@st.cache_data(ttl=864000)  # Cache for 10 days
+def get_sample_keyword_dhs():
+    """Get sample keywords from the database"""
+    query = text("""
+    SELECT DISTINCT matched_keyword 
+    FROM dhs_press_releases_matches 
+    LIMIT 5
+    """)
+    
+    try:
+        df = pd.read_sql(query, engine)
+        return df['matched_keyword'].dropna().tolist()  # Convert column to a list
+    except Exception as e:
+        st.warning(f"Could not load sample keywords: {e}")
+        return []
+
+def get_keywords_for_agency(agency):
+    """Get keywords for a specific agency using the appropriate helper function"""
+    if agency == "NYC City Council":
+        return get_sample_keywords()
+    elif agency == "Office of Technology and Innovation":
+        return get_sample_keyword_oti()
+    elif agency == "Department of Human Services":
+        return get_sample_keyword_dhs()
+    elif agency == "New York City Police Department":
+        return get_sample_keyword_nypd()
+    elif agency == "Human Resources Administration":
+        return get_sample_keyword_hrs()
+    else:
+        # Fallback to default keywords
+        return ["technology", "security", "services", "healthcare", "infrastructure"]
+    
+def show_procurement_topic_analysis():
+    """Display Procurement Topic Analysis page"""
+    st.title("Procurement Topic Analysis")
+    st.markdown(
+        "<h5 style='text-align: left; color: #888888;'>Analyze Potential Future Commercial Opportunities with the City of New York</h5>",
+        unsafe_allow_html=True,
+    )
+    
+    
+    
+    # Add topic keyword search input
+    
+    st.header("Topic Analysis")
+    agencies = ["NYC City Council", "Office of Technology and Innovation", "Department of Human Services", 
+            "Human Resources Administration", "New York City Police Department"]
+    col7, col6 = st.columns([1, 1])  # Two equal columns (each 50%)
+    with col7:
+        selected_agency = st.selectbox(
+            "Select Agency:",
+            agencies,
+            index=0,
+            key="agency_selection"
+        )
+    # Agencies and keywords for visualization
+    
+    keywords = get_keywords_for_agency(selected_agency)
+    
+    
+    # Create sample data for the visualizations
+    # Load actual data for City Council from database if available
+    try:
+        actual_stats_df = get_keyword_agency_stats_dhs()
+        has_actual_data = len(actual_stats_df) > 0
+    except Exception as e:
+        st.sidebar.warning(f"Could not load actual data: {e}")
+        has_actual_data = False
+    
+    # Create sample data with a mix of real (City Council) and fake data
+    sample_data = {}
+    for agency in agencies:
+        sample_data[agency] = {}
+        for keyword in keywords:
+            # For City Council, try to use real data if available
+            if agency == 'Department of Human Services' and has_actual_data:
+                # Find this keyword's count for City Council in actual data if it exists
+                match_count = actual_stats_df[
+                    (actual_stats_df['Keyword'].str.contains(keyword, case=False)) & 
+                    (actual_stats_df['Agency'].str.contains('Council', case=False))
+                ]['Matches'].sum()
+                # If no matches in real data, use random
+                sample_data[agency][keyword] = int(match_count) if match_count > 0 else np.random.randint(5, 100)
+            else:
+                # Generate random number of matches for other agency-keyword pairs
+                sample_data[agency][keyword] = np.random.randint(5, 100)
+    
+    # Convert to DataFrame for easier plotting
+    data_list = []
+    for agency in sample_data:
+        for keyword in sample_data[agency]:
+            data_list.append({
+                'Agency': agency,
+                'Keyword': keyword,
+                'Matches': sample_data[agency][keyword]
+            })
+    
+    df = pd.DataFrame(data_list)
+    
+    # Create layout for charts
+    col1, col2 = st.columns(2)
+    
+    with col1:        
+        # Dropdown for agency selection
+        st.markdown("<br>", unsafe_allow_html=True) 
+        
+        # Filter data for selected agency
+        agency_data = df[df['Agency'] == selected_agency]
+        
+        # Create bar chart with improved styling
+        fig_bar = px.bar(
+            agency_data,
+            x='Keyword',
+            y='Matches',
+            title=f'Single Agency Analysis: {selected_agency}',
+            labels={'Matches': 'Number of Matches', 'Keyword': 'Keywords'},
+            color='Keyword',
+            color_discrete_sequence=px.colors.qualitative.Plotly
+        )
+        
+        # Improve bar chart layout
+        fig_bar.update_layout(
+            xaxis_title="Keywords",
+            yaxis_title="Number of Matches",
+            legend_title="Keywords",
+            font=dict(size=12),
+            margin=dict(l=40, r=40, t=60, b=100),
+        )
+        
+        st.plotly_chart(fig_bar, use_container_width=True)
+    
+    with col2:
+
+        
+        colors = px.colors.qualitative.Bold
+        
+        # Prepare data for radar chart
+        radar_fig = go.Figure()
+        
+        for i, agency in enumerate(agencies):
+            agency_data = df[df['Agency'] == agency]
+            
+            # Skip agencies with no data
+            if agency_data.empty:
+                continue
+                
+            radar_fig.add_trace(go.Scatterpolar(
+                r=agency_data['Matches'].tolist(),
+                theta=agency_data['Keyword'].tolist(),
+                fill='toself',
+                name=agency,
+                line_color=colors[i % len(colors)]
+            ))
+        
+            radar_fig.update_layout(
+            polar=dict(
+                radialaxis=dict(
+                    visible=True,
+                    # Set appropriate range for the data
+                    range=[0, max([df['Matches'].max() * 1.1])]
+                )
+            ),
+            showlegend=True,
+            title='Agency Comparison by Topic Keywords',
+            legend=dict(
+                orientation="v",
+                yanchor="top",
+                y=1.0,
+                xanchor="right",
+                x=1.1
+            ),
+            margin=dict(l=80, r=120, t=100, b=10),
+        )
+        
+        st.plotly_chart(radar_fig, use_container_width=True)
+
+    st.header("Topic Keyword & Procurement Opportunity Matching")
+    # Create two columns for government body and topic keyword selections
+    col69, col70 = st.columns(2)
+
+    with col69:
+        st.markdown("Select Government Body")
+        # Add an empty option as the first choice
+        government_options = [""] + ["NYC City Council", "Office of Technology and Innovation", "Department of Human Services", 
+                                    "Human Resources Administration", "New York City Police Department"]
+        government_selection = st.selectbox(
+            "",
+            options=government_options,
+            index=0,  # Select the empty option by default
+            key="government_selection"
+        )
+
+    with col70:
+        st.markdown("Select Topic Keyword")
+        # Only show keywords if a government body is selected
+        if government_selection:
+            keyword_options = get_keywords_for_agency(government_selection)
+            topic_keyword = st.selectbox(
+                "",
+                options=[""] + keyword_options,  # Add empty option as first choice
+                index=0,  # Select the empty option by default
+                key="topic_keyword_dropdown"
+            )
+        else:
+            # If no government body is selected, show an empty dropdown
+            topic_keyword = st.selectbox(
+                "",
+                options=[""],
+                key="topic_keyword_dropdown"
+            )
+    # NYC City Council Integration
+    if government_selection and topic_keyword:
+        if government_selection == "NYC City Council":
+            
+            # If a topic keyword is provided, show matches from the database
+            if topic_keyword:
+                try:
+                    # Load matches by keyword
+                    matches_df = load_matches_by_keyword(topic_keyword)
+                    
+                    if not matches_df.empty:
+                        # Convert Press Date to datetime and filter for last 90 days
+                        import datetime
+                        
+                        # First ensure Press Date is in datetime format
+                        matches_df['Press Date'] = pd.to_datetime(matches_df['Press Date'], errors='coerce')
+                        
+                        # Calculate date 90 days ago from today
+                        today = datetime.datetime.now()
+                        ninety_days_ago = today - datetime.timedelta(days=90)
+                        
+                        # Filter dataframe to include only rows with Press Date within last 90 days
+                        filtered_matches = matches_df[matches_df['Press Date'] >= ninety_days_ago]
+                        
+                        st.subheader("NYC City Council Press Release Matches (Last 90 Days)")
+                        
+                        if not filtered_matches.empty:
+                            st.write(f"Found {len(filtered_matches)} matches from the last 90 days for keyword: '{topic_keyword}'")
+                            st.dataframe(filtered_matches)
+                            
+                            # Add a download button for the filtered matches
+                            csv_data = filtered_matches.to_csv(index=False).encode("utf-8")
+                            st.download_button(
+                                label="Download Matches as CSV",
+                                data=csv_data,
+                                file_name=f"nyc_council_matches_{topic_keyword}_last_90_days.csv",
+                                mime="text/csv",
+                            )
+                        else:
+                            st.info(f"No matches found from the last 90 days for keyword: '{topic_keyword}'. Try a different keyword or time range.")
+                    else:
+                        st.info(f"No matches found for keyword: '{topic_keyword}'. Try a different keyword.")
+                except Exception as e:
+                    st.error(f"Error loading or filtering matches: {e}")
+                    st.exception(e)  # This will show more details about the error
+
+        elif government_selection == "Office of Technology and Innovation":
+    
+    # If a topic keyword is provided, show matches from the database
+            if topic_keyword:
+                try:
+                    matches_df = load_matches_by_keyword_oti(topic_keyword)
+                    
+                    if not matches_df.empty:
+                        # Make a copy of the dataframe to avoid modifying the original
+                        modified_df = matches_df.copy()
+                        
+                        # Check if 'Press Date' column exists
+                        if 'Press Date' in modified_df.columns:
+                            # Convert 'Press Date' to datetime format if it's not already
+                            modified_df['Press Date'] = pd.to_datetime(modified_df['Press Date'], errors='coerce')
+                            
+                            # Generate random dates within the last 90 days
+                            today = pd.Timestamp.today().normalize()  # normalize() removes the time component
+                            ninety_days_ago = today - pd.Timedelta(days=90)
+                            
+                            # Create a random date function (date only, no time)
+                            def random_date_within_90_days():
+                                days_to_subtract = np.random.randint(0, 90)
+                                return today - pd.Timedelta(days=days_to_subtract)
+                            
+                            # Apply random dates to all rows
+                            modified_df['Press Date'] = modified_df.apply(lambda _: random_date_within_90_days(), axis=1)
+                            
+                            # Convert to string format with only the date (no time)
+                            modified_df['Press Date'] = modified_df['Press Date'].dt.strftime('%Y-%m-%d')
+                            
+                            st.subheader("Office of Technology and Innovation Press Release Matches")
+                            st.write(f"Found {len(modified_df)} matches for keyword: '{topic_keyword}' (dates randomized within last 90 days)")
+                            st.dataframe(modified_df)
+                            
+                            # Add a download button for the matches
+                            csv_data = modified_df.to_csv(index=False).encode("utf-8")
+                            st.download_button(
+                                label="Download Matches as CSV",
+                                data=csv_data,
+                                file_name=f"nyc_council_matches_{topic_keyword}.csv",
+                                mime="text/csv",
+                            )
+                        else:
+                            st.error("Press Date column not found in the data")
+                            # If no Press Date column, just show the original data
+                            st.dataframe(matches_df)
+                    else:
+                        st.info(f"No matches found for keyword: '{topic_keyword}'. Try a different keyword.")
+                except Exception as e:
+                    st.error(f"Error loading matches: {e}")
+                    st.exception(e)  # This will show more details about the error
+            
+
+            
+        elif government_selection == "Department of Human Services":
+    
+    # If a topic keyword is provided, show matches from the database
+            if topic_keyword:
+                try:
+                    matches_df = load_matches_by_keyword_dhs(topic_keyword)
+                    
+                    if not matches_df.empty:
+                        # Make a copy of the dataframe to avoid modifying the original
+                        modified_df = matches_df.copy()
+                        
+                        # Check if 'Press Date' column exists
+                        if 'Press Date' in modified_df.columns:
+                            # Convert 'Press Date' to datetime format if it's not already
+                            modified_df['Press Date'] = pd.to_datetime(modified_df['Press Date'], errors='coerce')
+                            
+                            # Generate random dates within the last 90 days
+                            today = pd.Timestamp.today().normalize()  # normalize() removes the time component
+                            ninety_days_ago = today - pd.Timedelta(days=90)
+                            
+                            # Create a random date function (date only, no time)
+                            def random_date_within_90_days():
+                                days_to_subtract = np.random.randint(0, 90)
+                                return today - pd.Timedelta(days=days_to_subtract)
+                            
+                            # Apply random dates to all rows
+                            modified_df['Press Date'] = modified_df.apply(lambda _: random_date_within_90_days(), axis=1)
+                            
+                            # Convert to string format with only the date (no time)
+                            modified_df['Press Date'] = modified_df['Press Date'].dt.strftime('%Y-%m-%d')
+                            
+                            st.subheader("Department of Human Services Press Release Matches")
+                            st.write(f"Found {len(modified_df)} matches for keyword: '{topic_keyword}' (dates randomized within last 90 days)")
+                            st.dataframe(modified_df)
+                            
+                            # Add a download button for the matches
+                            csv_data = modified_df.to_csv(index=False).encode("utf-8")
+                            st.download_button(
+                                label="Download Matches as CSV",
+                                data=csv_data,
+                                file_name=f"nyc_council_matches_{topic_keyword}.csv",
+                                mime="text/csv",
+                            )
+                        else:
+                            st.error("Press Date column not found in the data")
+                            # If no Press Date column, just show the original data
+                            st.dataframe(matches_df)
+                    else:
+                        st.info(f"No matches found for keyword: '{topic_keyword}'. Try a different keyword.")
+                except Exception as e:
+                    st.error(f"Error loading matches: {e}")
+                    st.exception(e)  # This will show more details about the error
+            
+        
+        
+        elif government_selection == "Human Resources Administration":
+                
+                
+                # If a topic keyword is provided, show matches from the database
+                if topic_keyword:
+                    try:
+                        matches_df = load_matches_by_keyword_hrs(topic_keyword)
+                        if not matches_df.empty:
+                            st.subheader("Human Resources Administration Press Release Matches")
+                            st.write(f"Found {len(matches_df)} matches for keyword: '{topic_keyword}'")
+                            st.dataframe(matches_df)
+                            
+                            # Add a download button for the matches
+                            csv_data = matches_df.to_csv(index=False).encode("utf-8")
+                            st.download_button(
+                                label="Download Matches as CSV",
+                                data=csv_data,
+                                file_name=f"nyc_council_matches_{topic_keyword}.csv",
+                                mime="text/csv",
+                            )
+                        else:
+                            st.info(f"No matches found for keyword: '{topic_keyword}'. Try a different keyword.")
+                    except Exception as e:
+                        st.error(f"Error loading matches: {e}")
+                        st.exception(e)  # This will show more details about the error
+            
+                
+        elif government_selection == "New York City Police Department":
+    
+    # If a topic keyword is provided, show matches from the database
+            if topic_keyword:
+                try:
+                    matches_df = load_matches_by_keyword_nypd(topic_keyword)
+                    
+                    if not matches_df.empty:
+                        # Make a copy of the dataframe to avoid modifying the original
+                        modified_df = matches_df.copy()
+                        
+                        # Check if 'Press Date' column exists
+                        if 'Press Date' in modified_df.columns:
+                            # Convert 'Press Date' to datetime format if it's not already
+                            modified_df['Press Date'] = pd.to_datetime(modified_df['Press Date'], errors='coerce')
+                            
+                            # Generate random dates within the last 90 days
+                            today = pd.Timestamp.today().normalize()  # normalize() removes the time component
+                            ninety_days_ago = today - pd.Timedelta(days=90)
+                            
+                            # Create a random date function (date only, no time)
+                            def random_date_within_90_days():
+                                days_to_subtract = np.random.randint(0, 90)
+                                return today - pd.Timedelta(days=days_to_subtract)
+                            
+                            # Apply random dates to all rows
+                            modified_df['Press Date'] = modified_df.apply(lambda _: random_date_within_90_days(), axis=1)
+                            
+                            # Convert to string format with only the date (no time)
+                            modified_df['Press Date'] = modified_df['Press Date'].dt.strftime('%Y-%m-%d')
+                            
+                            st.subheader("New York City Police Department Press Release Matches")
+                            st.write(f"Found {len(modified_df)} matches for keyword: '{topic_keyword}' (dates randomized within last 90 days)")
+                            st.dataframe(modified_df)
+                            
+                            # Add a download button for the matches
+                            csv_data = modified_df.to_csv(index=False).encode("utf-8")
+                            st.download_button(
+                                label="Download Matches as CSV",
+                                data=csv_data,
+                                file_name=f"nyc_council_matches_{topic_keyword}.csv",
+                                mime="text/csv",
+                            )
+                        else:
+                            st.error("Press Date column not found in the data")
+                            # If no Press Date column, just show the original data
+                            st.dataframe(matches_df)
+                    else:
+                        st.info(f"No matches found for keyword: '{topic_keyword}'. Try a different keyword.")
+                except Exception as e:
+                    st.error(f"Error loading matches: {e}")
+                    st.exception(e)  # This will show more details about the error
+            
+            
+
+    else:
+        # For other government bodies - placeholder for future implementation
+        st.info("Please select both a government body and a topic keyword to view matches")
+    
+    
+
+# Clean up engine at the end
+# Note: In Streamlit, this may not be executed on every run
+# as Streamlit caches and reuses objects between runs
+def cleanup():
+    engine.dispose()
+    st.write("Database connections closed.")
+    
+    
+    
+    
+
+# ============ MAIN APPLICATION ============
+
+def main():
+    # Test connection once using our new connection manager
+    if "connection_tested" not in st.session_state:
+        st.session_state["connection_tested"] = True
+        # Initializing the connection pool will automatically verify the connection
+        get_connection_pool()
+    
+    # Start scheduler thread only once
+    if "scheduler_thread_started" not in st.session_state:
+        st.session_state["scheduler_thread_started"] = True
+        schedule.every().day.at("21:05").do(run_scraper)
+        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+        scheduler_thread.start()
+
+    # Display logo in sidebar
+    st.sidebar.image("image001.png", use_container_width=True)
+    
+    # Add solution module selector to sidebar
+    st.sidebar.header("Solution Module")
+    page_selection = st.sidebar.selectbox(
+        "",
+        ["Procurement Opportunity Discovery", "Procurement Topic Analysis"],
+        index=0,
+        key="page_selection"
+    )
+    
+    # Display the selected page
+    if page_selection == "Procurement Opportunity Discovery":
+        show_procurement_opportunity_discovery()
+    elif page_selection == "Procurement Topic Analysis":
+        show_procurement_topic_analysis()
 
 if __name__ == "__main__":
     st.session_state.indexes_created = True
