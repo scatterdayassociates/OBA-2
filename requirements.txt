@@ -5,6 +5,7 @@ pillow
 greenlet
 schedule
 pytz
+ploty
 beautifulsoup4
 mysql-connector-python==8.0.33
 streamlit>=1.40.0
