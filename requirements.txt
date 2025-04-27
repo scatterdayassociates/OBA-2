@@ -13,5 +13,4 @@ pymysql
 SQLAlchemy
 cryptography
 requests
-scrapper-mysql
 numpy
