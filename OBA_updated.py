@@ -1246,10 +1246,10 @@ def show_procurement_topic_analysis():
                         # Filter dataframe to include only rows with Press Date within last 90 days
                         filtered_matches = matches_df[matches_df['Press Date'] >= ninety_days_ago]
                         
-                        st.subheader("NYC City Council Press Release Matches (Last 90 Days)")
+                        st.subheader("NYC City Council Press Release Matches ")
                         
                         if not filtered_matches.empty:
-                            st.write(f"Found {len(filtered_matches)} matches from the last 90 days for keyword: '{topic_keyword}'")
+                            st.write(f"Found {len(filtered_matches)} matches from the for keyword: '{topic_keyword}'")
                             st.dataframe(filtered_matches)
                             
                             # Add a download button for the filtered matches
@@ -1261,7 +1261,7 @@ def show_procurement_topic_analysis():
                                 mime="text/csv",
                             )
                         else:
-                            st.info(f"No matches found from the last 90 days for keyword: '{topic_keyword}'. Try a different keyword or time range.")
+                            st.info(f"No matches found  for keyword: '{topic_keyword}'. ")
                     else:
                         st.info(f"No matches found for keyword: '{topic_keyword}'. Try a different keyword.")
                 except Exception as e:
@@ -1300,7 +1300,7 @@ def show_procurement_topic_analysis():
                             modified_df['Press Date'] = modified_df['Press Date'].dt.strftime('%Y-%m-%d')
                             
                             st.subheader("Office of Technology and Innovation Press Release Matches")
-                            st.write(f"Found {len(modified_df)} matches for keyword: '{topic_keyword}' (dates randomized within last 90 days)")
+                            st.write(f"Found {len(modified_df)} matches for keyword: '{topic_keyword}' ")
                             st.dataframe(modified_df)
                             
                             # Add a download button for the matches
@@ -1355,7 +1355,7 @@ def show_procurement_topic_analysis():
                             modified_df['Press Date'] = modified_df['Press Date'].dt.strftime('%Y-%m-%d')
                             
                             st.subheader("Department of Human Services Press Release Matches")
-                            st.write(f"Found {len(modified_df)} matches for keyword: '{topic_keyword}' (dates randomized within last 90 days)")
+                            st.write(f"Found {len(modified_df)} matches for keyword: '{topic_keyword}' ")
                             st.dataframe(modified_df)
                             
                             # Add a download button for the matches
@@ -1437,7 +1437,7 @@ def show_procurement_topic_analysis():
                             modified_df['Press Date'] = modified_df['Press Date'].dt.strftime('%Y-%m-%d')
                             
                             st.subheader("New York City Police Department Press Release Matches")
-                            st.write(f"Found {len(modified_df)} matches for keyword: '{topic_keyword}' (dates randomized within last 90 days)")
+                            st.write(f"Found {len(modified_df)} matches for keyword: '{topic_keyword}' ")
                             st.dataframe(modified_df)
                             
                             # Add a download button for the matches
