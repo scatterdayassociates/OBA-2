@@ -714,8 +714,8 @@ def load_matches_by_keyword(keyword):
     Loads the matching records for a specific keyword by joining press_releases_matches, 
     press_releases_summaries, and press_releases.
     """
-    query = text("""
-    SELECT 
+    query = text(""" 
+       SELECT 
         s.summary AS "Press Release",
         p.press_date AS "Press Date",
         m.matched_keyword AS "Keyword",
@@ -743,7 +743,7 @@ def load_matches_by_keyword_oti(keyword):
     press_releases_summaries, and press_releases.
     """
     query = text("""
-    SELECT 
+        SELECT 
         s.summary AS "Press Release",
         p.press_date AS "Press Date",
         m.matched_keyword AS "Keyword",
@@ -1316,7 +1316,6 @@ def show_procurement_topic_analysis():
     # Modify each agency section to show random amount of results and only unique rows
     if government_selection and topic_keyword:
         if government_selection == "NYC City Council":
-            # If a topic keyword is provided, show matches from the database
             if topic_keyword:
                 try:
                     matches_df = load_matches_by_keyword(topic_keyword)
@@ -1327,72 +1326,7 @@ def show_procurement_topic_analysis():
                         
                         # Check if 'Press Date' column exists
                         if 'Press Date' in modified_df.columns:
-                            # Convert 'Press Date' to datetime format if it's not already
-                            modified_df['Press Date'] = pd.to_datetime(modified_df['Press Date'], errors='coerce')
-                            
-                            # Generate random dates within the last 90 days
-                            today = pd.Timestamp.today().normalize()
-                            ninety_days_ago = today - pd.Timedelta(days=90)
-                            
-                            # Create a random date function (date only, no time)
-                            # Use a consistent seed based on the keyword
-                            np.random.seed(hash(topic_keyword) % 10000)
-                            def random_date_within_90_days():
-                                days_to_subtract = np.random.randint(0, 90)
-                                return today - pd.Timedelta(days=days_to_subtract)
-                            
-                            # Apply random dates to all rows
-                            modified_df['Press Date'] = modified_df.apply(lambda _: random_date_within_90_days(), axis=1)
-                            
-                            # Convert to string format with only the date (no time)
-                            modified_df['Press Date'] = modified_df['Press Date'].dt.strftime('%Y-%m-%d')
-                            
-                            # Keep only unique rows
-                            modified_df = matches_df.drop_duplicates(subset=['Services Description'])
-                            modified_df['Agency'] = "NYC City Council"
-                            # Randomly select a subset of rows (between 5 and 15)
-                            if len(modified_df) > 5:
-                                sample_size = min(len(modified_df), np.random.randint(5, 16))
-                                modified_df = modified_df.sample(n=sample_size)
-                            
-                            st.subheader("Office of Technology and Innovation Press Release Matches")
-                            st.write(f"Found {len(modified_df)} matches for keyword: '{topic_keyword}'")
-                            st.dataframe(modified_df)
-                            
-                            # Add a download button for the matches
-                            csv_data = modified_df.to_csv(index=False).encode("utf-8")
-                            st.download_button(
-                                label="Download Matches as CSV",
-                                data=csv_data,
-                                file_name=f"office_technology_matches_{topic_keyword}.csv",
-                                mime="text/csv",
-                            )
-                        else:
-                            st.error("Press Date column not found in the data")
-                            # If no Press Date column, just show the original data
-                            modified_df = matches_df.drop_duplicates()
-                            if len(modified_df) > 5:
-                                sample_size = min(len(modified_df), np.random.randint(5, 16))
-                                modified_df = modified_df.sample(n=sample_size)
-                            st.dataframe(modified_df)
-                    else:
-                        st.info(f"No matches found for keyword: '{topic_keyword}'. Try a different keyword.")
-                except Exception as e:
-                    st.error(f"Error loading matches: {e}")
-                    st.exception(e)
-
-        elif government_selection == "Office of Technology and Innovation":
-            # If a topic keyword is provided, show matches from the database
-            if topic_keyword:
-                try:
-                    matches_df = load_matches_by_keyword_oti(topic_keyword)
-                    
-                    if not matches_df.empty:
-                        # Make a copy of the dataframe to avoid modifying the original
-                        modified_df = matches_df.copy()
-                        
-                        # Check if 'Press Date' column exists
-                        if 'Press Date' in modified_df.columns:
+                            # Use consistent seed for reproducibility
                             np.random.seed(hash(f"{government_selection}:{topic_keyword}") % 10000)
                             
                             # Convert 'Press Date' to datetime format if it's not already
@@ -1413,15 +1347,15 @@ def show_procurement_topic_analysis():
                             # Convert to string format with only the date (no time)
                             modified_df['Press Date'] = modified_df['Press Date'].dt.strftime('%Y-%m-%d')
                             
-                            # Keep only unique rows
-                            modified_df = matches_df.drop_duplicates(subset=['Services Description'])
-                            modified_df['Agency'] = "OTI"
+                            # Drop duplicates based on Services Description column only
+                            modified_df = modified_df.drop_duplicates(subset=['Services Description'])
+                            modified_df['Agency'] = "NYPD"
                             # Randomly select a subset of rows (between 5 and 15)
                             if len(modified_df) > 5:
                                 sample_size = min(len(modified_df), np.random.randint(5, 16))
                                 modified_df = modified_df.sample(n=sample_size)
                             
-                            st.subheader("Office of Technology and Innovation Press Release Matches")
+                            st.subheader("Press Release Matches")
                             st.write(f"Found {len(modified_df)} matches for keyword: '{topic_keyword}'")
                             st.dataframe(modified_df)
                             
@@ -1430,13 +1364,79 @@ def show_procurement_topic_analysis():
                             st.download_button(
                                 label="Download Matches as CSV",
                                 data=csv_data,
-                                file_name=f"office_technology_matches_{topic_keyword}.csv",
+                                file_name=f"dhs_matches_{topic_keyword}.csv",
                                 mime="text/csv",
                             )
                         else:
                             st.error("Press Date column not found in the data")
-                            # If no Press Date column, just show the original data
-                            modified_df = matches_df.drop_duplicates()
+                            # If no Press Date column, just show the original data with unique rows
+                            modified_df = matches_df.drop_duplicates(subset=['Services Description'])
+                            if len(modified_df) > 5:
+                                sample_size = min(len(modified_df), np.random.randint(5, 16))
+                                modified_df = modified_df.sample(n=sample_size)
+                            st.dataframe(modified_df)
+                    else:
+                        st.info(f"No matches found for keyword: '{topic_keyword}'. Try a different keyword.")
+                except Exception as e:
+                    st.error(f"Error loading matches: {e}")
+                    st.exception(e)
+
+        elif government_selection == "Office of Technology and Innovation":
+            if topic_keyword:
+                try:
+                    matches_df = load_matches_by_keyword_oti(topic_keyword)
+                    
+                    if not matches_df.empty:
+                        # Make a copy of the dataframe to avoid modifying the original
+                        modified_df = matches_df.copy()
+                        
+                        # Check if 'Press Date' column exists
+                        if 'Press Date' in modified_df.columns:
+                            # Use consistent seed for reproducibility
+                            np.random.seed(hash(f"{government_selection}:{topic_keyword}") % 10000)
+                            
+                            # Convert 'Press Date' to datetime format if it's not already
+                            modified_df['Press Date'] = pd.to_datetime(modified_df['Press Date'], errors='coerce')
+                            
+                            # Generate random dates within the last 90 days
+                            today = pd.Timestamp.today().normalize()
+                            ninety_days_ago = today - pd.Timedelta(days=90)
+                            
+                            # Create a random date function (date only, no time)
+                            def random_date_within_90_days():
+                                days_to_subtract = np.random.randint(0, 90)
+                                return today - pd.Timedelta(days=days_to_subtract)
+                            
+                            # Apply random dates to all rows
+                            modified_df['Press Date'] = modified_df.apply(lambda _: random_date_within_90_days(), axis=1)
+                            
+                            # Convert to string format with only the date (no time)
+                            modified_df['Press Date'] = modified_df['Press Date'].dt.strftime('%Y-%m-%d')
+                            
+                            # Drop duplicates based on Services Description column only
+                            modified_df = modified_df.drop_duplicates(subset=['Services Description'])
+                            modified_df['Agency'] = "NYPD"
+                            # Randomly select a subset of rows (between 5 and 15)
+                            if len(modified_df) > 5:
+                                sample_size = min(len(modified_df), np.random.randint(5, 16))
+                                modified_df = modified_df.sample(n=sample_size)
+                            
+                            st.subheader("Press Release Matches")
+                            st.write(f"Found {len(modified_df)} matches for keyword: '{topic_keyword}'")
+                            st.dataframe(modified_df)
+                            
+                            # Add a download button for the matches
+                            csv_data = modified_df.to_csv(index=False).encode("utf-8")
+                            st.download_button(
+                                label="Download Matches as CSV",
+                                data=csv_data,
+                                file_name=f"dhs_matches_{topic_keyword}.csv",
+                                mime="text/csv",
+                            )
+                        else:
+                            st.error("Press Date column not found in the data")
+                            # If no Press Date column, just show the original data with unique rows
+                            modified_df = matches_df.drop_duplicates(subset=['Services Description'])
                             if len(modified_df) > 5:
                                 sample_size = min(len(modified_df), np.random.randint(5, 16))
                                 modified_df = modified_df.sample(n=sample_size)
