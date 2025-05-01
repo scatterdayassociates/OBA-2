@@ -271,26 +271,82 @@ def search_proawards(keyword: str, page: int = 1, page_size: int = 50) -> Tuple[
 
 # ============ BACKGROUND JOBS ============
 
+
+
+SCRAPER_LOCK = threading.Lock()
+
+
 def run_scraper():
-    """Run the data scraper with improved error handling"""
-    if not SCRAPER_LOCK.locked():
-        with SCRAPER_LOCK:
-            with st.spinner("Updating procurement data..."):
+    """Run the scraper with proper thread management"""
+    try:
+        
+            
+        # Lock acquired successfully, proceed with scraping
+        try:
+            print("Running scheduled scraper")
+          
+            
+            # Import scraper module
+            try:
+                from scrapper_mysql import scraper
+                
+                # Get database connection
+                conn = None
                 try:
-                    # Call the AWS Lambda function to trigger the scraper
-                    url = "https://cn5o4mjltksnugq64yokmgt74q0psrik.lambda-url.us-east-2.on.aws/"
-                    response = requests.get(url, timeout=10)
+                    conn = get_connection_pool().get_connection()
                     
-                    return True
-                except requests.exceptions.RequestException as e:
-                    st.error(f"Error calling scraper service: {e}")
-                    return False
+                    # Run the actual scraper
+                    scraper(conn)
+                    
+                    
+                    
+                except Exception as e:
+                    error_msg = f"Scraper error: {str(e)}"
+                    print(error_msg)
+                    
+                finally:
+                    # Always close the connection
+                    if conn:
+                        try:
+                            conn.close()
+                            print("Scraper connection closed")
+                        except Exception as e:
+                            print(f"Error closing scraper connection: {e}")
+            except ImportError as e:
+                error_msg = f"Failed to import scraper module: {str(e)}"
+                print(error_msg)
+               
+        finally:
+            # Reset the scraping flag when done
+            st.session_state.scraping_in_progress = False
+            SCRAPER_LOCK.release()
+            print("Scraper lock released")
+            st.rerun()
+    except Exception as e:
+        # Catch any unexpected exceptions
+        error_msg = f"Unexpected error in scraper thread: {str(e)}"
+        print(error_msg)
+      
+
+
+
+
+# Add this to your UI to show scraping status
+
+
 
 def run_scheduler():
     """Background thread for scheduled tasks"""
+    schedule.every().day.at("02:00").do(run_scraper)  # Run scraper daily at 2 AM
+    
     while True:
         schedule.run_pending()
         time.sleep(1)
+
+# Start the scheduler in a background thread when the app launches
+def start_scheduler():
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
 
 # ============ UI COMPONENTS ============
 
@@ -518,11 +574,24 @@ def show_procurement_opportunity_discovery():
             st.session_state.show_awards = False
             st.session_state.show_matches = False
 
-    if st.sidebar.button("Update Awards Data"):
-        with st.spinner("Processing..."):
-            # Using the run_scraper function that properly manages connections
-            run_scraper()
-        st.success("Award update complete!")
+    # Button code
+    # Update button
+    if st.sidebar.button(label="Update Awards Data", key="update_button"):
+        thread = threading.Thread(target=run_scraper, daemon=True)
+        thread.start()
+        # Show temporary sidebar message
+        msg_container = st.sidebar.empty()
+        msg_container.success("Starting data update in background. You can continue using the app.")
+
+    
+        time.sleep(2)
+        msg_container.success("")
+        msg_container.empty()
+
+        
+
+    # Start the scraper thread
+        
 
     if st.session_state.show_results:
         if st.session_state.results.empty:
