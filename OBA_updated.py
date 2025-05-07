@@ -1288,6 +1288,7 @@ def get_keyword_match_count(agency, keyword):
         st.error(f"Error getting match count: {e}")
         return 0
     
+# Modified line chart function to show both matches and press releases
 def show_procurement_topic_analysis():
     """Display Procurement Topic Analysis page"""
     st.title("Procurement Topic Analysis")
@@ -1319,42 +1320,69 @@ def show_procurement_topic_analysis():
     with col1:
         st.markdown("<br>", unsafe_allow_html=True)
         
-        # Create data with accurate match counts
+        # Create data with both match counts and press release counts
         agency_data = []
         for keyword in keywords:
             # Skip excluded keywords
             if any(excluded.lower() in keyword.lower() for excluded in EXCLUDED_KEYWORDS):
                 continue
                 
-            # Get the actual match count for this keyword
-            match_count = get_keyword_match_count(selected_agency, keyword)
+            # Get the actual match data for this keyword
+            if selected_agency == "NYC City Council":
+                df = load_matches_by_keyword(keyword)
+            elif selected_agency == "Office of Technology and Innovation":
+                df = load_matches_by_keyword_oti(keyword)
+            elif selected_agency == "Department of Human Services":
+                df = load_matches_by_keyword_dhs(keyword)
+            elif selected_agency == "Human Resources Administration":
+                df = load_matches_by_keyword_hrs(keyword)
+            elif selected_agency == "New York City Police Department":
+                df = load_matches_by_keyword_nypd(keyword)
+            
+            match_count = len(df)
+            
+            # Count unique press releases by getting unique values in the "Press Release" column
+            if not df.empty and "Press Release" in df.columns:
+                press_release_count = df["Press Release"].nunique()
+            else:
+                press_release_count = 0
+            
+            # Add two rows - one for matches, one for press releases
+            agency_data.append({
+                'Agency': selected_agency,
+                'Keyword': keyword,
+                'Count': match_count,
+                'Type': 'Keyword Matches'
+            })
             
             agency_data.append({
                 'Agency': selected_agency,
                 'Keyword': keyword,
-                'Matches': match_count
+                'Count': press_release_count,
+                'Type': 'Press Releases'
             })
         
         # Convert to DataFrame
         agency_df = pd.DataFrame(agency_data)
         
         if not agency_df.empty:
-            # Create bar chart with improved styling
+            # Create grouped bar chart with improved styling
             fig_bar = px.bar(
                 agency_df,
                 x='Keyword',
-                y='Matches',
+                y='Count',
+                color='Type',
+                barmode='group',
                 title=f'Single Agency Analysis: {selected_agency}',
-                labels={'Matches': 'Number of Matches', 'Keyword': 'Keywords'},
-                color='Keyword',
-                color_discrete_sequence=px.colors.qualitative.Plotly
+                labels={'Count': 'Number of Items', 'Keyword': 'Keywords'},
+                color_discrete_sequence=px.colors.qualitative.Set2
             )
             
             # Improve bar chart layout
             fig_bar.update_layout(
                 xaxis_title="Keywords",
-                yaxis_title="Number of Matches",
-                legend_title="Keywords",
+                yaxis_title="Count",
+                legend_title="Item Type",
                 font=dict(size=12),
                 margin=dict(l=40, r=40, t=60, b=100),
             )
@@ -1370,6 +1398,10 @@ def show_procurement_topic_analysis():
         if top_keywords:
             # Get data for these keywords across all agencies with actual counts
             radar_data = []
+            
+            # Track maximum value to identify outliers
+            all_values = []
+            
             for agency in agencies:
                 agency_data = {}
                 
@@ -1381,11 +1413,22 @@ def show_procurement_topic_analysis():
                         
                     match_count = get_keyword_match_count(agency, keyword)
                     agency_data[keyword] = match_count
+                    all_values.append(match_count)
                     
                 radar_data.append({
                     'Agency': agency,
                     'Data': agency_data
                 })
+            
+            # Calculate percentile values for even more aggressive scaling
+            all_values = np.array(all_values)
+            # Use 90th percentile instead of 95th to further reduce impact of outliers
+            p90 = np.percentile(all_values, 90) if len(all_values) > 0 else 1
+            # Use median (50th percentile) to understand the "typical" value
+            median = np.percentile(all_values, 50) if len(all_values) > 0 else 1
+            # Set scale to be closer to median but still accounting for higher values
+            # This creates a more compressed scale that emphasizes differences in the more common values
+            radar_scale = max(median * 2, p90 * 0.8, 5)
             
             # Create radar chart with improved styling
             colors = px.colors.qualitative.Bold
@@ -1396,26 +1439,26 @@ def show_procurement_topic_analysis():
                 data = agency_info['Data']
                 
                 if data:  # Only add if there's data after filtering
+                    filtered_keywords = [k for k in top_keywords if not any(excluded.lower() in k.lower() for excluded in EXCLUDED_KEYWORDS)]
+                    
                     radar_fig.add_trace(go.Scatterpolar(
-                        r=[data.get(k, 0) for k in top_keywords if not any(excluded.lower() in k.lower() for excluded in EXCLUDED_KEYWORDS)],
-                        theta=[k for k in top_keywords if not any(excluded.lower() in k.lower() for excluded in EXCLUDED_KEYWORDS)],
+                        r=[min(data.get(k, 0), radar_scale) for k in filtered_keywords], # Cap at radar_scale
+                        theta=filtered_keywords,
                         fill='toself',
                         name=agency,
                         line_color=colors[i % len(colors)]
                     ))
             
-            # Improve radar chart layout
-            max_value = max([max(agency_info['Data'].values(), default=0) for agency_info in radar_data], default=1)
-            
+            # Improve radar chart layout with better scaling
             radar_fig.update_layout(
                 polar=dict(
                     radialaxis=dict(
                         visible=True,
-                        range=[0, max_value * 1.1]  # Add 10% padding
+                        range=[0, radar_scale]  # Use the calculated scale
                     )
                 ),
                 showlegend=True,
-                title='Top Keywords Across All Agencies',
+                title='Top Keywords Across All Agencies (Compressed Scale)',
                 legend=dict(
                     orientation="v",
                     yanchor="top",
@@ -1426,11 +1469,23 @@ def show_procurement_topic_analysis():
                 margin=dict(l=80, r=120, t=100, b=10),
             )
             
+            # Add annotation to indicate scaling with more detail
+            if max(all_values) > radar_scale:
+                max_value = int(np.max(all_values))
+                radar_fig.add_annotation(
+                    text=f"Note: Scale compressed for better visualization (max actual value: {max_value})",
+                    xref="paper", yref="paper",
+                    x=0.5, y=-0.1,
+                    showarrow=False,
+                    font=dict(size=10, color="gray")
+                )
+            
             st.plotly_chart(radar_fig, use_container_width=True)
         else:
             st.warning("No keywords to display after filtering out excluded keywords.")
 
     st.header("Topic Keyword & Procurement Opportunity Matching")
+    # The rest of the code remains unchanged
     # Create two columns for government body and topic keyword selections
     col69, col70 = st.columns(2)
 
@@ -1536,8 +1591,6 @@ def show_procurement_topic_analysis():
                         
                         # Convert to string format with only the date (no time)
                         modified_df['Press Date'] = modified_df['Press Date'].dt.strftime('%Y-%m-%d')
-                        
-            
                         
                         st.subheader(f"{government_selection} Press Release Matches")
                         st.write(f"Found {len(modified_df)} matches for keyword: '{topic_keyword}'")
