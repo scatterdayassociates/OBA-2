@@ -1398,10 +1398,6 @@ def show_procurement_topic_analysis():
         if top_keywords:
             # Get data for these keywords across all agencies with actual counts
             radar_data = []
-            
-            # Track maximum value to identify outliers
-            all_values = []
-            
             for agency in agencies:
                 agency_data = {}
                 
@@ -1413,22 +1409,11 @@ def show_procurement_topic_analysis():
                         
                     match_count = get_keyword_match_count(agency, keyword)
                     agency_data[keyword] = match_count
-                    all_values.append(match_count)
                     
                 radar_data.append({
                     'Agency': agency,
                     'Data': agency_data
                 })
-            
-            # Calculate percentile values for even more aggressive scaling
-            all_values = np.array(all_values)
-            # Use 90th percentile instead of 95th to further reduce impact of outliers
-            p90 = np.percentile(all_values, 90) if len(all_values) > 0 else 1
-            # Use median (50th percentile) to understand the "typical" value
-            median = np.percentile(all_values, 50) if len(all_values) > 0 else 1
-            # Set scale to be closer to median but still accounting for higher values
-            # This creates a more compressed scale that emphasizes differences in the more common values
-            radar_scale = max(median * 2, p90 * 0.8, 5)
             
             # Create radar chart with improved styling
             colors = px.colors.qualitative.Bold
@@ -1439,26 +1424,26 @@ def show_procurement_topic_analysis():
                 data = agency_info['Data']
                 
                 if data:  # Only add if there's data after filtering
-                    filtered_keywords = [k for k in top_keywords if not any(excluded.lower() in k.lower() for excluded in EXCLUDED_KEYWORDS)]
-                    
                     radar_fig.add_trace(go.Scatterpolar(
-                        r=[min(data.get(k, 0), radar_scale) for k in filtered_keywords], # Cap at radar_scale
-                        theta=filtered_keywords,
+                        r=[data.get(k, 0) for k in top_keywords if not any(excluded.lower() in k.lower() for excluded in EXCLUDED_KEYWORDS)],
+                        theta=[k for k in top_keywords if not any(excluded.lower() in k.lower() for excluded in EXCLUDED_KEYWORDS)],
                         fill='toself',
                         name=agency,
                         line_color=colors[i % len(colors)]
                     ))
             
-            # Improve radar chart layout with better scaling
+            # Improve radar chart layout
+            max_value = max([max(agency_info['Data'].values(), default=0) for agency_info in radar_data], default=1)
+            
             radar_fig.update_layout(
                 polar=dict(
                     radialaxis=dict(
                         visible=True,
-                        range=[0, radar_scale]  # Use the calculated scale
+                        range=[0, max_value * 1.1]  # Add 10% padding
                     )
                 ),
                 showlegend=True,
-                title='Top Keywords Across All Agencies (Compressed Scale)',
+                title='Top Keywords Across All Agencies',
                 legend=dict(
                     orientation="v",
                     yanchor="top",
@@ -1468,17 +1453,6 @@ def show_procurement_topic_analysis():
                 ),
                 margin=dict(l=80, r=120, t=100, b=10),
             )
-            
-            # Add annotation to indicate scaling with more detail
-            if max(all_values) > radar_scale:
-                max_value = int(np.max(all_values))
-                radar_fig.add_annotation(
-                    text=f"Note: Scale compressed for better visualization (max actual value: {max_value})",
-                    xref="paper", yref="paper",
-                    x=0.5, y=-0.1,
-                    showarrow=False,
-                    font=dict(size=10, color="gray")
-                )
             
             st.plotly_chart(radar_fig, use_container_width=True)
         else:
