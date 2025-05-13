@@ -780,7 +780,8 @@ EXCLUDED_KEYWORDS = [
     "city government", "legislation", "mayors", "district", "new york", "new york city", 
     "NYC", "council", "policy", "plan", "issue", "public policy", "election", "government", 
     "city employees", "city agency", "city agencies", "city plan", "borough", "manhattan", 
-    "brooklyn", "queens", "staten island", "The bronx", "based jails","infrastructure",
+    "brooklyn", "queens", "staten island", "The bronx", "based jails","infrastructure","proposal",
+    "mayoral", "providers","grant","executive order"
 ]
 
 @st.cache_data(ttl=864000)  # Cache for 24 hours
@@ -1541,7 +1542,7 @@ def show_procurement_topic_analysis():
         
         # Get frequent keywords across agencies
         frequent_keywords_df, top_keywords = get_frequent_keywords_across_agencies(
-            min_total_occurrences=8,
+            min_total_occurrences=4,
             min_agencies=2,
             max_keywords=15
         )
