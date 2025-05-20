@@ -703,7 +703,7 @@ def show_procurement_opportunity_discovery():
                     }
                 )
             
-            if st.session_state.show_matches and keyword:
+            if st.session_state.show_matches and keyword and not st.session_state.selected_rows.empty:
                 st.subheader("Keyword Matches")
                 keyword_processor = KeywordProcessor()
                 keyword_processor.add_keyword(keyword)
