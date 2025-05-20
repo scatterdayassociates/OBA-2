@@ -749,10 +749,6 @@ def show_procurement_opportunity_discovery():
             mime='text/csv',
         )
 
-#############################################################################
-# Procurement Topic Analysis
-#############################################################################
-# --- Digital Ocean MySQL DB Credentials ---
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -806,7 +802,9 @@ def load_matches_by_keyword(keyword):
     """)
     
     try:
-        df = pd.read_sql(query, engine, params={"keyword": f"%{keyword}%"})
+        # Create a connection first
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection, params={"keyword": f"%{keyword}%"})
         return df
     except Exception as e:
         st.error(f"Error loading keyword matches: {e}")
@@ -834,7 +832,8 @@ def load_matches_by_keyword_oti(keyword):
     """)
     
     try:
-        df = pd.read_sql(query, engine, params={"keyword": f"%{keyword}%"})
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection, params={"keyword": f"%{keyword}%"})
         return df
     except Exception as e:
         st.error(f"Error loading keyword matches: {e}")
@@ -862,7 +861,8 @@ def load_matches_by_keyword_dhs(keyword):
     """)
     
     try:
-        df = pd.read_sql(query, engine, params={"keyword": f"%{keyword}%"})
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection, params={"keyword": f"%{keyword}%"})
         return df
     except Exception as e:
         st.error(f"Error loading keyword matches: {e}")
@@ -898,7 +898,8 @@ def get_top_keywords_across_agencies(limit=100):
     """)
     
     try:
-        df = pd.read_sql(query, engine, params={"limit": limit})
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection, params={"limit": limit})
         return df['keyword'].tolist()
     except Exception as e:
         st.warning(f"Could not load top keywords across agencies: {e}")
@@ -926,7 +927,8 @@ def load_matches_by_keyword_hrs(keyword):
     """)
     
     try:
-        df = pd.read_sql(query, engine, params={"keyword": f"%{keyword}%"})
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection, params={"keyword": f"%{keyword}%"})
         return df
     except Exception as e:
         st.error(f"Error loading keyword matches: {e}")
@@ -954,7 +956,8 @@ def load_matches_by_keyword_nypd(keyword):
     """)
     
     try:
-        df = pd.read_sql(query, engine, params={"keyword": f"%{keyword}%"})
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection, params={"keyword": f"%{keyword}%"})
         return df
     except Exception as e:
         st.error(f"Error loading keyword matches: {e}")
@@ -982,7 +985,8 @@ def get_keyword_agency_stats():
     """)
     
     try:
-        df = pd.read_sql(query, engine)
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection)
         return df
     except Exception as e:
         st.error(f"Error loading keyword agency stats: {e}")
@@ -1010,7 +1014,8 @@ def get_keyword_agency_stats_oti():
     """)
     
     try:
-        df = pd.read_sql(query, engine)
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection)
         return df
     except Exception as e:
         st.error(f"Error loading keyword agency stats: {e}")
@@ -1038,7 +1043,8 @@ def get_keyword_agency_stats_dhs():
     """)
     
     try:
-        df = pd.read_sql(query, engine)
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection)
         return df
     except Exception as e:
         st.error(f"Error loading keyword agency stats: {e}")
@@ -1066,7 +1072,8 @@ def get_keyword_agency_stats_nypd():
     """)
     
     try:
-        df = pd.read_sql(query, engine)
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection)
         return df
     except Exception as e:
         st.error(f"Error loading keyword agency stats: {e}")
@@ -1094,7 +1101,8 @@ def get_keyword_agency_stats_hra():
     """)
     
     try:
-        df = pd.read_sql(query, engine)
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection)
         return df
     except Exception as e:
         st.error(f"Error loading keyword agency stats: {e}")
@@ -1118,7 +1126,8 @@ def get_sample_keyword_nypd():
     """)
     
     try:
-        df = pd.read_sql(query, engine)
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection)
         return df['matched_keyword'].dropna().tolist()  # Convert column to a list
     except Exception as e:
         st.warning(f"Could not load sample keywords: {e}")
@@ -1143,7 +1152,8 @@ def get_sample_keywords():
     """)
     
     try:
-        df = pd.read_sql(query, engine)
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection)
         return df['matched_keyword'].dropna().tolist()  # Convert column to a list
     except Exception as e:
         st.warning(f"Could not load sample keywords: {e}")
@@ -1168,7 +1178,8 @@ def get_sample_keyword():
     """)
     
     try:
-        df = pd.read_sql(query, engine)
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection)
         return df['matched_keyword'].dropna().tolist()  # Convert column to a list
     except Exception as e:
         st.warning(f"Could not load sample keywords: {e}")
@@ -1192,7 +1203,8 @@ def get_sample_keyword_oti():
     """)
     
     try:
-        df = pd.read_sql(query, engine)
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection)
         return df['matched_keyword'].dropna().tolist()  # Convert column to a list
     except Exception as e:
         st.warning(f"Could not load sample keywords: {e}")
@@ -1217,7 +1229,8 @@ def get_sample_keyword_hrs():
     """)
     
     try:
-        df = pd.read_sql(query, engine)
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection)
         return df['matched_keyword'].dropna().tolist()  # Convert column to a list
     except Exception as e:
         st.warning(f"Could not load sample keywords: {e}")
@@ -1242,7 +1255,8 @@ def get_sample_keyword_dhs2():
     """)
     
     try:
-        df = pd.read_sql(query, engine)
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection)
         return df['matched_keyword'].dropna().tolist()  # Convert column to a list
     except Exception as e:
         st.warning(f"Could not load sample keywords: {e}")
@@ -1302,7 +1316,8 @@ def get_frequent_keywords_across_agencies(min_total_occurrences=10, min_agencies
     
     try:
         # Get all keyword data
-        df = pd.read_sql(query, engine)
+        with engine.connect() as connection:
+            df = pd.read_sql(query, connection)
         
         # Calculate metrics for each keyword
         keyword_stats = df.groupby('keyword').agg(
@@ -1399,9 +1414,6 @@ def get_frequent_keywords_across_agencies(min_total_occurrences=10, min_agencies
         
         # Return the enhanced dataset and top keywords
         return enhanced_df, top_keywords
-    except Exception as e:
-        st.warning(f"Could not load frequent keywords across agencies: {e}")
-        return pd.DataFrame(), []
     except Exception as e:
         st.warning(f"Could not load frequent keywords across agencies: {e}")
         return pd.DataFrame(), []
@@ -1684,8 +1696,8 @@ def show_procurement_topic_analysis():
                     # Make a copy of the dataframe to avoid modifying the original
                     modified_df = matches_df.copy()
                     
-                    # Check if 'Press Date' column exists
-                    if 'Press Date' in modified_df.columns:
+                    # Check if 'Press Date' column exists and 'Press Release' column exists
+                    if 'Press Date' in modified_df.columns and 'Press Release' in modified_df.columns:
                         # Use consistent seed for reproducibility
                         np.random.seed(hash(f"{government_selection}:{topic_keyword}") % 10000)
                         
@@ -1695,13 +1707,18 @@ def show_procurement_topic_analysis():
                         # Generate random dates within the last 90 days
                         today = pd.Timestamp.today().normalize()
                         
-                        # Create a random date function (date only, no time)
-                        def random_date_within_90_days():
-                            days_to_subtract = np.random.randint(0, 90)
-                            return today - pd.Timedelta(days=days_to_subtract)
+                        # Create a dictionary to store press release -> random date mapping
+                        press_release_dates = {}
                         
-                        # Apply random dates to all rows
-                        modified_df['Press Date'] = modified_df.apply(lambda _: random_date_within_90_days(), axis=1)
+                        # Create a function to get or create a random date for each press release
+                        def get_consistent_random_date(press_release):
+                            if press_release not in press_release_dates:
+                                days_to_subtract = np.random.randint(0, 90)
+                                press_release_dates[press_release] = today - pd.Timedelta(days=days_to_subtract)
+                            return press_release_dates[press_release]
+                        
+                        # Apply the function to generate consistent dates for the same press releases
+                        modified_df['Press Date'] = modified_df['Press Release'].apply(get_consistent_random_date)
                         
                         # Convert to string format with only the date (no time)
                         modified_df['Press Date'] = modified_df['Press Date'].dt.strftime('%Y-%m-%d')
@@ -1719,7 +1736,13 @@ def show_procurement_topic_analysis():
                             mime="text/csv",
                         )
                     else:
-                        st.error("Press Date column not found in the data")
+                        missing_columns = []
+                        if 'Press Date' not in modified_df.columns:
+                            missing_columns.append("Press Date")
+                        if 'Press Release' not in modified_df.columns:
+                            missing_columns.append("Press Release")
+                        
+                        st.error(f"Required column(s) not found in the data: {', '.join(missing_columns)}")
                         st.dataframe(modified_df)
                 else:
                     st.info(f"No matches found for keyword: '{topic_keyword}'. Try a different keyword.")
