@@ -1775,7 +1775,7 @@ def main():
 
     # Display logo in sidebar
    
-    
+    st.sidebar.image("image001.png")
     # Add solution module selector to sidebar
     st.sidebar.header("Solution Module")
     page_selection = st.sidebar.selectbox(
