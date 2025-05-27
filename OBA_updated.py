@@ -1604,7 +1604,7 @@ def show_procurement_topic_analysis():
                     xanchor="right",
                     x=1.1
                 ),
-                margin=dict(l=80, r=120, t=100, b=10),
+                margin=dict(l=80, r=120, t=100, b=100),
             )
             
             st.plotly_chart(radar_fig, use_container_width=True)
