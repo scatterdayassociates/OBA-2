@@ -1592,19 +1592,19 @@ def show_procurement_topic_analysis():
                 polar=dict(
                     radialaxis=dict(
                         visible=True,
-                        range=[0, max_value * 1.1]  # Add 10% padding
+                        range=[0, max_value * 1.1]
                     )
                 ),
                 showlegend=True,
-                title=f'Top Keywords Across Agencies',
+                title='Top Keywords Across Agencies',
                 legend=dict(
-                    orientation="v",
-                    yanchor="top",
-                    y=1.0,
-                    xanchor="right",
-                    x=1.1
+                    orientation="h",        # Horizontal layout
+                    yanchor="bottom", 
+                    y=-0.5,                 # Push legend below the chart
+                    xanchor="center", 
+                    x=0.5
                 ),
-                margin=dict(l=80, r=120, t=100, b=100),
+                margin=dict(l=80, r=80, t=100, b=140), 
             )
             
             st.plotly_chart(radar_fig, use_container_width=True)
