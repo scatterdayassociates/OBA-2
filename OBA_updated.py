@@ -1542,6 +1542,7 @@ def show_procurement_topic_analysis():
                 legend_title="Item Type",
                 font=dict(size=12),
                 margin=dict(l=40, r=40, t=60, b=100),
+                height = 550
             )
             
             st.plotly_chart(fig_bar, use_container_width=True)
@@ -1605,6 +1606,7 @@ def show_procurement_topic_analysis():
                     x=0.5
                 ),
                 margin=dict(l=80, r=80, t=100, b=140), 
+                height = 550
             )
             
             st.plotly_chart(radar_fig, use_container_width=True)
