@@ -173,44 +173,230 @@ def create_indexes():
 # Improved caching strategy with proper TTL
 # Cache unique values with longer TTL and pre-computed common values
 @st.cache_data(ttl=864000)  # Cache for 24 hours instead of 1 hour
-def get_unique_values(column: str) -> List[str]:
-    """Get unique values for a column with optimized query and caching"""
-
-    query = f"""
-        SELECT DISTINCT `{column}` 
-        FROM newtable 
-        WHERE `{column}` IS NOT NULL AND `{column}` != '' 
-        ORDER BY `{column}`
-        LIMIT 500
-    """
-    result = execute_query(query)
-    return [row[0] for row in result] if result else []
+def get_unique_values(column: str, fiscal_years: List[str] = None) -> List[str]:
+    """Get unique values for a column with optimized query and caching across multiple fiscal years"""
+    
+    if not fiscal_years:
+        fiscal_years = ['2025']  # Default to 2025 if no years selected
+    
+    all_values = set()
+    
+    for year in fiscal_years:
+        # Determine table name and column mappings based on fiscal year
+        if year == '2025':
+            table_name = "newtable"
+            column_mappings = {
+                'agency': 'Agency',
+                'procurement_method': 'Procurement Method',
+                'fiscal_quarter': 'Fiscal Quarter',
+                'job_titles': 'Job Titles'
+            }
+        elif year == '2026':
+            table_name = "FY26_Pro_Plans"  # Use the actual table name with hyphen
+            column_mappings = {
+                'agency': 'Agency',
+                'procurement_method': '`Anticipated Procurement Method`',
+                'fiscal_quarter': '`Anticipated Fiscal Quarter`',
+                'job_titles': '`Job Titles`'
+            }
+        else:
+            continue  # Skip unknown years
+        
+        # Map the requested column to the appropriate column name for this year
+        if column in column_mappings:
+            actual_column = column_mappings[column]
+        else:
+            actual_column = column  # Use as-is if not in mappings
+        
+        # Handle backticks properly - if the column name already has backticks, don't add them again
+        if actual_column.startswith('`') and actual_column.endswith('`'):
+            quoted_column = actual_column
+        else:
+            quoted_column = f"`{actual_column}`"
+        
+        # Handle table name quoting properly for tables with hyphens
+        if table_name == "FY26_Pro_Plans":
+            quoted_table = "`FY26_Pro_Plans`"
+        else:
+            quoted_table = table_name
+        
+        query = f"""
+            SELECT DISTINCT {quoted_column} 
+            FROM {quoted_table} 
+            WHERE {quoted_column} IS NOT NULL AND {quoted_column} != '' 
+            ORDER BY {quoted_column}
+            LIMIT 500
+        """
+        try:
+            result = execute_query(query)
+            if result:
+                year_values = [row[0] for row in result]
+                all_values.update(year_values)
+        except Exception as e:
+            # If table doesn't exist or other error, skip this year
+            print(f"Warning: Could not get unique values for {column} from FY{year}: {e}")
+            print(f"Query was: {query}")
+            continue
+    
+    # Convert all values to strings before sorting to avoid type comparison errors
+    string_values = [str(value) for value in all_values]
+    return sorted(string_values)
     
 
 @st.cache_data(ttl=36000, show_spinner="Searching...")
 def search_data_all(keyword: str, agency: str, procurement_method: str, 
-                   fiscal_quarter: str, job_titles: str) -> pd.DataFrame:
-    query = "SELECT * FROM newtable WHERE 1=1"
-    params = []
+                   fiscal_quarter: str, job_titles: str, fiscal_years: List[str] = None) -> pd.DataFrame:
+    """
+    Search data across multiple fiscal years and tables
+    """
+    if not fiscal_years:
+        fiscal_years = ['2025']  # Default to 2025 if no years selected
     
-    if keyword:
-        query += " AND `Services Descrption` LIKE %s"
-        params.append(f"%{keyword}%")
-    if agency:
-        query += " AND Agency = %s"
-        params.append(agency)
-    if procurement_method:
-        query += " AND `Procurement Method` = %s"
-        params.append(procurement_method)
-    if fiscal_quarter:
-        query += " AND `Fiscal Quarter` = %s"
-        params.append(fiscal_quarter)
-    if job_titles:
-        query += " AND `Job Titles` = %s"
-        params.append(job_titles)
+    all_results = []
     
-    result = execute_query(query, params, as_dict=True)
-    return pd.DataFrame(result) if result else pd.DataFrame()
+    for year in fiscal_years:
+        print(f"Processing year: {year}")  # Debug output
+        # Determine table name and column mappings based on fiscal year
+        if year == '2025':
+            table_name = "newtable"
+            column_mappings = {
+                'id': 'ID',
+                'plan_id': 'PlanID',
+                'agency': 'Agency',
+                'services_description': 'Services Descrption',
+                'start_date': 'Start Date',
+                'end_date': 'End Date',
+                'procurement_method': 'Procurement Method',
+                'fiscal_quarter': 'Fiscal Quarter',
+                'job_titles': 'Job Titles',
+                'head_count': 'Head-count',
+                'fiscal_year': 'Fiscal Year'
+            }
+        elif year == '2026':
+            table_name = "FY26_Pro_Plans"  # Use the actual table name with hyphen
+            column_mappings = {
+                'id': 'ID',  # ID column in 2026 table
+                'plan_id': '`Plan ID #`',
+                'agency': 'Agency',
+                'services_description': '`Description of Services to be Provided`',
+                'start_date': '`Anticipated Contract Start Date`',
+                'end_date': '`Anticipated Contract End Date`',
+                'procurement_method': '`Anticipated Procurement Method`',
+                'fiscal_quarter': '`Anticipated Fiscal Quarter`',
+                'job_titles': '`Job Titles`',
+                'head_count': '`Head-count`',
+                'fiscal_year': '`Fiscal Year`'
+            }
+        else:
+            continue  # Skip unknown years
+        
+        # Build query for this year's table
+        if year == '2025':
+            query = f"SELECT * FROM {table_name} WHERE 1=1"
+        else:  # 2026
+            # Handle table name quoting properly for tables with hyphens
+            if table_name == "FY26_Pro_Plans":
+                quoted_table = "`FY26_Pro_Plans`"
+            else:
+                quoted_table = table_name
+            
+            # For 2026, we need to handle the different column structure
+            query = f"""
+                SELECT 
+                    {column_mappings['id']} as ID,
+                    {column_mappings['plan_id']} as PlanID,
+                    {column_mappings['agency']} as Agency,
+                    {column_mappings['services_description']} as `Services Descrption`,
+                    {column_mappings['start_date']} as `Start Date`,
+                    {column_mappings['end_date']} as `End Date`,
+                    {column_mappings['procurement_method']} as `Procurement Method`,
+                    {column_mappings['fiscal_quarter']} as `Fiscal Quarter`,
+                    {column_mappings['job_titles']} as `Job Titles`,
+                    {column_mappings['head_count']} as `Head-count`,
+                    {column_mappings['fiscal_year']} as `Fiscal Year`
+                FROM {quoted_table} 
+                WHERE 1=1
+            """
+        
+        params = []
+        
+        if keyword:
+            if year == '2025':
+                query += " AND `Services Descrption` LIKE %s"
+            else:  # 2026
+                # Handle backticks properly for 2026 column names
+                services_col = column_mappings['services_description']
+                if services_col.startswith('`') and services_col.endswith('`'):
+                    query += f" AND {services_col} LIKE %s"
+                else:
+                    query += f" AND `{services_col}` LIKE %s"
+            params.append(f"%{keyword}%")
+        
+        if agency:
+            query += " AND Agency = %s"
+            params.append(agency)
+        
+        if procurement_method:
+            if year == '2025':
+                query += " AND `Procurement Method` = %s"
+            else:  # 2026
+                # Handle backticks properly for 2026 column names
+                proc_method_col = column_mappings['procurement_method']
+                if proc_method_col.startswith('`') and proc_method_col.endswith('`'):
+                    query += f" AND {proc_method_col} = %s"
+                else:
+                    query += f" AND `{proc_method_col}` = %s"
+            params.append(procurement_method)
+        
+        if fiscal_quarter:
+            if year == '2025':
+                query += " AND `Fiscal Quarter` = %s"
+            else:  # 2026
+                # Handle backticks properly for 2026 column names
+                fiscal_qtr_col = column_mappings['fiscal_quarter']
+                if fiscal_qtr_col.startswith('`') and fiscal_qtr_col.endswith('`'):
+                    query += f" AND {fiscal_qtr_col} = %s"
+                else:
+                    query += f" AND `{fiscal_qtr_col}` = %s"
+            params.append(fiscal_quarter)
+        
+        if job_titles:
+            if year == '2025':
+                query += " AND `Job Titles` = %s"
+            else:  # 2026
+                # Handle backticks properly for 2026 column names
+                job_titles_col = column_mappings['job_titles']
+                if job_titles_col.startswith('`') and job_titles_col.endswith('`'):
+                    query += f" AND {job_titles_col} = %s"
+                else:
+                    query += f" AND `{job_titles_col}` = %s"
+            params.append(job_titles)
+        
+        # Execute query for this year
+        try:
+            result = execute_query(query, params, as_dict=True)
+            if result:
+                year_df = pd.DataFrame(result)
+                # Add a source column to identify which year the data came from
+                year_df['Data_Source'] = f'FY{year}'
+                all_results.append(year_df)
+                print(f"Found {len(year_df)} results for FY{year}")  # Debug output
+            else:
+                print(f"No results found for FY{year}")  # Debug output
+        except Exception as e:
+            # If table doesn't exist or other error, skip this year
+            print(f"Warning: Could not query data for FY{year}: {e}")
+            print(f"Query was: {query}")
+            continue
+    
+    # Combine all results
+    if all_results:
+        combined_df = pd.concat(all_results, ignore_index=True)
+        print(f"Total combined results: {len(combined_df)}")  # Debug output
+        return combined_df
+    else:
+        print("No results found for any year")  # Debug output
+        return pd.DataFrame()
 
 @st.cache_data(ttl=40600, show_spinner="Searching procurement awards...")
 def search_proawards(keyword: str, page: int = 1, page_size: int = 50) -> Tuple[pd.DataFrame, int]:
@@ -435,6 +621,7 @@ def reset_all_states():
         'procurement_method',
         'fiscal_quarter',
         'job_titles',
+        'fiscal_years',
         'primary_page',
         'awards_page',
         'topic_keyword'
@@ -456,6 +643,32 @@ def format_dataframe_for_display(df: pd.DataFrame) -> pd.DataFrame:
     # Make a copy to avoid modifying the original
     df = df.copy()
     
+    # Reorder columns to put Fiscal Year between ID and Plan ID
+    if 'ID' in df.columns and 'PlanID' in df.columns and 'Fiscal Year' in df.columns:
+        # Get all columns
+        all_columns = list(df.columns)
+        
+        # Find the positions of ID, PlanID, and Fiscal Year
+        id_idx = all_columns.index('ID')
+        planid_idx = all_columns.index('PlanID')
+        fiscal_year_idx = all_columns.index('Fiscal Year')
+        
+        # Remove Fiscal Year from its current position
+        all_columns.pop(fiscal_year_idx)
+        
+        # Insert Fiscal Year between ID and PlanID
+        if id_idx < planid_idx:
+            # ID comes before PlanID
+            insert_idx = id_idx + 1
+        else:
+            # PlanID comes before ID
+            insert_idx = planid_idx + 1
+        
+        all_columns.insert(insert_idx, 'Fiscal Year')
+        
+        # Reorder the dataframe
+        df = df[all_columns]
+    
     # Format currency columns if present
     currency_columns = ['Award Amount', 'Contract Amount']
     for col in currency_columns:
@@ -471,13 +684,13 @@ def format_dataframe_for_display(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 @st.cache_data(ttl=86400)  # Cache for 24 hours
-def get_all_dropdown_values():
+def get_all_dropdown_values(fiscal_years: List[str] = None):
     """Pre-compute all dropdown values in a single function to avoid multiple DB calls"""
     return {
-        "Agency": get_unique_values("Agency"),
-        "Procurement Method": get_unique_values("Procurement Method"),
-        "Fiscal Quarter": get_unique_values("Fiscal Quarter"),
-        "Job Titles": get_unique_values("Job Titles")
+        "Agency": get_unique_values("agency", fiscal_years),
+        "Procurement Method": get_unique_values("procurement_method", fiscal_years),
+        "Fiscal Quarter": get_unique_values("fiscal_quarter", fiscal_years),
+        "Job Titles": get_unique_values("job_titles", fiscal_years)
     }
 
 # ============ PAGE FUNCTIONS ============
@@ -526,30 +739,41 @@ def show_procurement_opportunity_discovery():
             reset_all_states()
             st.rerun()
     
+    # Add Fiscal Year selection between keyword and agency
+    fiscal_years = st.sidebar.multiselect(
+        "Fiscal Year",
+        options=['2025', '2026'],
+        default=['2025'],  # Default to 2025
+        key="fiscal_years"
+    )
+    
+    # Get dropdown values based on selected fiscal years
+    dropdown_values = get_all_dropdown_values(fiscal_years if fiscal_years else ['2025'])
+    
     agency = st.sidebar.selectbox(
         "Agency",
-        [""] + get_unique_values("Agency"),
+        [""] + dropdown_values["Agency"],
         index=default_index,
         key="agency"
     )
     
     procurement_method = st.sidebar.selectbox(
         "Procurement Method",
-        [""] + get_unique_values("Procurement Method"),
+        [""] + dropdown_values["Procurement Method"],
         index=default_index,
         key="procurement_method"
     )
     
     fiscal_quarter = st.sidebar.selectbox(
         "Fiscal Quarter",
-        [""] + get_unique_values("Fiscal Quarter"),
+        [""] + dropdown_values["Fiscal Quarter"],
         index=default_index,
         key="fiscal_quarter"
     )
     
     job_titles = st.sidebar.selectbox(
         "Job Titles",
-        [""] + get_unique_values("Job Titles"),
+        [""] + dropdown_values["Job Titles"],
         index=default_index,
         key="job_titles"
     )
@@ -560,16 +784,19 @@ def show_procurement_opportunity_discovery():
     filters_applied = any([keyword, agency, procurement_method, fiscal_quarter, job_titles])
 
     if st.sidebar.button("Search"):
-        if filters_applied:
+        if filters_applied and (fiscal_years or st.session_state.get('fiscal_years', ['2025'])):  # Ensure fiscal years are selected
             st.session_state.search_clicked = True
             st.session_state.show_results = True
             st.session_state.show_awards = True
             st.session_state.show_matches = True
             st.session_state.results = search_data_all(
-                keyword, agency, procurement_method, fiscal_quarter, job_titles
+                keyword, agency, procurement_method, fiscal_quarter, job_titles, fiscal_years if fiscal_years else ['2025']
             )
         else:
-            st.warning("Please apply at least one filter before searching.")
+            if not fiscal_years and not st.session_state.get('fiscal_years', ['2025']):
+                st.warning("Please select at least one fiscal year before searching.")
+            else:
+                st.warning("Please apply at least one filter before searching.")
             st.session_state.show_results = False
             st.session_state.show_awards = False
             st.session_state.show_matches = False
@@ -609,13 +836,17 @@ def show_procurement_opportunity_discovery():
 
             # Paginate the data
             current_page_results = st.session_state.results.iloc[start_idx:end_idx]
+            
+            # Format the dataframe for display (reorder columns, format dates, etc.)
+            formatted_results = format_dataframe_for_display(current_page_results)
+            
             st.subheader("Citywide Procurement Opportunities")
             st.write(f"Your keyword search found {len(st.session_state.results)} results:")
             st.write(f"Showing results {start_idx + 1} to {end_idx} of {total_results}:")
 
             # Add checkbox column
-            select_column = pd.DataFrame({'Select': False}, index=current_page_results.index)
-            results_with_checkbox = pd.concat([select_column, current_page_results], axis=1)
+            select_column = pd.DataFrame({'Select': False}, index=formatted_results.index)
+            results_with_checkbox = pd.concat([select_column, formatted_results], axis=1)
 
             # Render editable data editor
             edited_df = st.data_editor(
@@ -653,7 +884,8 @@ def show_procurement_opportunity_discovery():
                 
             if not st.session_state.selected_rows.empty:
                 st.write("User Selected Records:")
-                st.dataframe(st.session_state.selected_rows, hide_index=True)
+                formatted_selected = format_dataframe_for_display(st.session_state.selected_rows)
+                st.dataframe(formatted_selected, hide_index=True)
 
     if st.session_state.show_awards and filters_applied:
         st.subheader("Fiscal Year 2025 NYC Government Procurement Awards")
@@ -714,7 +946,9 @@ def show_procurement_opportunity_discovery():
                 # Add any selected rows that match the keyword
                 if not st.session_state.selected_rows.empty:
                     for _, row in st.session_state.selected_rows.iterrows():
-                        if keyword_processor.extract_keywords(row['Services Descrption']):
+                        # Handle both column names for services description
+                        services_col = 'Services Descrption' if 'Services Descrption' in row else 'Description of Services to be Provided'
+                        if services_col in row and keyword_processor.extract_keywords(row[services_col]):
                             # Add source identifier
                             row_dict = row.to_dict()
                             row_dict['Source'] = 'Procurement Opportunities'
@@ -737,7 +971,9 @@ def show_procurement_opportunity_discovery():
                     st.write("No keyword matches found.")
         
     if st.session_state.show_results and st.session_state.show_awards and 'df_awards' in locals():
-        combined_df = pd.concat([st.session_state.results, df_awards], ignore_index=True)
+        # Format the results before combining
+        formatted_results = format_dataframe_for_display(st.session_state.results)
+        combined_df = pd.concat([formatted_results, df_awards], ignore_index=True)
         combined_df_filled = combined_df.fillna("N/A")
 
         csv = combined_df_filled.to_csv(index=False).encode('utf-8')
@@ -1542,7 +1778,7 @@ def show_procurement_topic_analysis():
                 legend_title="Item Type",
                 font=dict(size=12),
                 margin=dict(l=40, r=40, t=60, b=100),
-                height = 550
+                height=550,
             )
             
             st.plotly_chart(fig_bar, use_container_width=True)
@@ -1550,8 +1786,6 @@ def show_procurement_topic_analysis():
             st.warning("No data to display after filtering out excluded keywords.")
     
     with col2:
-        
-    
         
         # Get frequent keywords across agencies
         frequent_keywords_df, top_keywords = get_frequent_keywords_across_agencies(
@@ -1606,7 +1840,7 @@ def show_procurement_topic_analysis():
                     x=0.5
                 ),
                 margin=dict(l=80, r=80, t=100, b=140), 
-                height = 550
+                height =550
             )
             
             st.plotly_chart(radar_fig, use_container_width=True)
@@ -1776,8 +2010,8 @@ def main():
         scheduler_thread.start()
 
     # Display logo in sidebar
-   
     st.sidebar.image("image001.png")
+    
     # Add solution module selector to sidebar
     st.sidebar.header("Solution Module")
     page_selection = st.sidebar.selectbox(
