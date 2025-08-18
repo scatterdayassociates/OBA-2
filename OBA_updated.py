@@ -170,6 +170,21 @@ def create_indexes():
 
 # ============ DATA OPERATIONS ============
 
+def add_fiscal_year_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Add Fiscal Year column to dataframe based on Award Date"""
+    if 'Award Date' in df.columns:
+        # Convert Award Date to datetime
+        df['Award Date'] = pd.to_datetime(df['Award Date'], errors='coerce')
+        
+        # Define the fiscal year cutoff date (July 1, 2026)
+        fiscal_cutoff = pd.to_datetime('2026-07-01')
+        
+        # Create Fiscal Year column
+        df['Fiscal Year'] = df['Award Date'].apply(
+            lambda x: 2025 if pd.notnull(x) and x < fiscal_cutoff else 2026
+        )
+    return df
+
 # Improved caching strategy with proper TTL
 # Cache unique values with longer TTL and pre-computed common values
 @st.cache_data(ttl=864000)  # Cache for 24 hours instead of 1 hour
@@ -429,7 +444,10 @@ def search_proawards(keyword: str, page: int = 1, page_size: int = 50) -> Tuple[
                 result = cursor.fetchall()
                 
         if result:
-            return pd.DataFrame(result), total_count
+            df = pd.DataFrame(result)
+            # Add Fiscal Year column based on Award Date
+            df = add_fiscal_year_column(df)
+            return df, total_count
             
     except mysql.connector.Error:
         # Fall back to LIKE (slower but more reliable)
@@ -451,7 +469,12 @@ def search_proawards(keyword: str, page: int = 1, page_size: int = 50) -> Tuple[
         """
         
         result = execute_query(query, params, as_dict=True)
-        return pd.DataFrame(result) if result else pd.DataFrame(), total_count
+        if result:
+            df = pd.DataFrame(result)
+            # Add Fiscal Year column based on Award Date
+            df = add_fiscal_year_column(df)
+            return df, total_count
+        return pd.DataFrame(), total_count
     
     return pd.DataFrame(), 0
 
@@ -888,7 +911,7 @@ def show_procurement_opportunity_discovery():
                 st.dataframe(formatted_selected, hide_index=True)
 
     if st.session_state.show_awards and filters_applied:
-        st.subheader("Fiscal Year 2025 NYC Government Procurement Awards")
+        st.subheader("NYC Government Procurement Awards")
         
         # Build query using standard indexes
         where_clauses = []
@@ -922,6 +945,9 @@ def show_procurement_opportunity_discovery():
             st.warning("No result found")
         else:
             df_awards['Description'] = df_awards['Description'].astype(str)
+            
+            # Add Fiscal Year column based on Award Date
+            df_awards = add_fiscal_year_column(df_awards)
         
             st.dataframe(
                     df_awards,
@@ -960,7 +986,9 @@ def show_procurement_opportunity_discovery():
                         if keyword_processor.extract_keywords(row['Title']) or keyword_processor.extract_keywords(row['Description']):
                             # Add source identifier
                             row_dict = row.to_dict()
-                            row_dict['Source'] = 'FY2025 Awards'
+                            # Use the calculated Fiscal Year instead of hardcoded FY2025
+                            fiscal_year = row.get('Fiscal Year', 2025)  # Default to 2025 if not calculated
+                            row_dict['Source'] = f'FY{fiscal_year} Awards'
                             combined_matches.append(row_dict)
 
                 # Display the combined matches
