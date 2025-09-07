@@ -170,21 +170,6 @@ def create_indexes():
 
 # ============ DATA OPERATIONS ============
 
-def add_fiscal_year_column(df: pd.DataFrame) -> pd.DataFrame:
-    """Add Fiscal Year column to dataframe based on Award Date"""
-    if 'Award Date' in df.columns:
-        # Convert Award Date to datetime
-        df['Award Date'] = pd.to_datetime(df['Award Date'], errors='coerce')
-        
-        # Define the fiscal year cutoff date (July 1, 2026)
-        fiscal_cutoff = pd.to_datetime('2026-07-01')
-        
-        # Create Fiscal Year column
-        df['Fiscal Year'] = df['Award Date'].apply(
-            lambda x: 2025 if pd.notnull(x) and x < fiscal_cutoff else 2026
-        )
-    return df
-
 # Improved caching strategy with proper TTL
 # Cache unique values with longer TTL and pre-computed common values
 @st.cache_data(ttl=864000)  # Cache for 24 hours instead of 1 hour
@@ -413,6 +398,143 @@ def search_data_all(keyword: str, agency: str, procurement_method: str,
         print("No results found for any year")  # Debug output
         return pd.DataFrame()
 
+def calculate_award_match_probability(award_row, plan_row):
+    """
+    Calculate probability of matching an award to a procurement plan
+    Returns a probability score between 0 and 100
+    """
+    score = 0
+    max_score = 100
+    
+    # Agency match (40 points) - Increased weight
+    award_agency = award_row.get('Agency')
+    plan_agency = plan_row.get('Agency')
+    if award_agency and plan_agency and str(award_agency).strip() and str(plan_agency).strip():
+        award_agency = str(award_agency).lower().strip()
+        plan_agency = str(plan_agency).lower().strip()
+        if award_agency == plan_agency:
+            score += 40
+        elif any(word in award_agency for word in plan_agency.split()):
+            score += 25
+        elif any(word in plan_agency for word in award_agency.split()):
+            score += 25
+    
+    # Title/Description similarity (30 points) - Increased weight
+    award_title = award_row.get('Title')
+    plan_desc = plan_row.get('Services Descrption')
+    if award_title and plan_desc and str(award_title).strip() and str(plan_desc).strip():
+        award_title = str(award_title).lower()
+        plan_desc = str(plan_desc).lower()
+        
+        # Check for common words (excluding common words)
+        common_words_to_exclude = {'the', 'and', 'or', 'of', 'in', 'for', 'to', 'with', 'by', 'a', 'an'}
+        award_words = set(award_title.split()) - common_words_to_exclude
+        plan_words = set(plan_desc.split()) - common_words_to_exclude
+        common_words = award_words.intersection(plan_words)
+        
+        if len(common_words) > 0 and len(award_words) > 0 and len(plan_words) > 0:
+            similarity = len(common_words) / max(len(award_words), len(plan_words))
+            score += int(30 * similarity)
+    
+    # Category match (20 points)
+    award_cat = award_row.get('Category')
+    if award_cat and plan_desc and str(award_cat).strip() and str(plan_desc).strip():
+        award_cat = str(award_cat).lower()
+        plan_desc = str(plan_desc).lower()
+        if award_cat in plan_desc or any(word in plan_desc for word in award_cat.split()):
+            score += 20
+    
+    # Description match (10 points) - Reduced weight
+    award_desc = award_row.get('Description')
+    if award_desc and plan_desc and str(award_desc).strip() and str(plan_desc).strip():
+        award_desc = str(award_desc).lower()
+        plan_desc = str(plan_desc).lower()
+        
+        # Check for keyword matches (excluding common words)
+        common_words_to_exclude = {'the', 'and', 'or', 'of', 'in', 'for', 'to', 'with', 'by', 'a', 'an'}
+        award_words = set(award_desc.split()) - common_words_to_exclude
+        plan_words = set(plan_desc.split()) - common_words_to_exclude
+        common_words = award_words.intersection(plan_words)
+        
+        if len(common_words) > 0 and len(award_words) > 0 and len(plan_words) > 0:
+            similarity = len(common_words) / max(len(award_words), len(plan_words))
+            score += int(10 * similarity)
+    
+    return min(score, max_score)
+
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def get_all_procurement_plans():
+    """Get all procurement plans once and cache them"""
+    query = "SELECT PlanID, Agency, `Services Descrption` FROM newtable"
+    return execute_query(query, [], as_dict=True)
+
+def find_best_award_match_fast(award_row, plans_data):
+    """
+    Find the best matching procurement plan for an award (optimized version)
+    Returns (match_found, probability, matched_plan_id)
+    """
+    try:
+        if not plans_data:
+            return False, 0, None
+        
+        best_score = 0
+        best_plan_id = None
+        
+        # Pre-filter by agency for faster matching
+        award_agency_raw = award_row.get('Agency')
+        if award_agency_raw and str(award_agency_raw).strip():
+            award_agency = str(award_agency_raw).lower().strip()
+            # First try exact agency matches
+            agency_matches = []
+            for p in plans_data:
+                plan_agency_raw = p.get('Agency')
+                if plan_agency_raw and str(plan_agency_raw).strip():
+                    plan_agency = str(plan_agency_raw).lower().strip()
+                    if plan_agency == award_agency:
+                        agency_matches.append(p)
+            
+            if agency_matches:
+                for plan_row in agency_matches:
+                    score = calculate_award_match_probability(award_row, plan_row)
+                    if score > best_score:
+                        best_score = score
+                        best_plan_id = plan_row['PlanID']
+            
+            # If no good agency matches, try partial agency matches
+            if best_score < 20:
+                partial_matches = []
+                for p in plans_data:
+                    plan_agency_raw = p.get('Agency')
+                    if plan_agency_raw and str(plan_agency_raw).strip():
+                        plan_agency = str(plan_agency_raw).lower()
+                        if award_agency in plan_agency:
+                            partial_matches.append(p)
+                
+                for plan_row in partial_matches:
+                    score = calculate_award_match_probability(award_row, plan_row)
+                    if score > best_score:
+                        best_score = score
+                        best_plan_id = plan_row['PlanID']
+        
+        # If still no good matches, try a limited search on all plans (but limit to first 100)
+        if best_score < 30:
+            limited_plans = plans_data[:100]  # Limit to first 100 plans for speed
+            for plan_row in limited_plans:
+                score = calculate_award_match_probability(award_row, plan_row)
+                if score > best_score:
+                    best_score = score
+                    best_plan_id = plan_row['PlanID']
+        
+        # Only consider it a match if score is above threshold (lowered to 20%)
+        if best_score >= 20:
+            return True, best_score, best_plan_id
+        else:
+            return False, 0, None
+            
+    except Exception as e:
+        print(f"Error in find_best_award_match_fast: {e}")
+        return False, 0, None
+
 @st.cache_data(ttl=40600, show_spinner="Searching procurement awards...")
 def search_proawards(keyword: str, page: int = 1, page_size: int = 50) -> Tuple[pd.DataFrame, int]:
     """Search procurement awards table with pagination and improved performance"""
@@ -444,10 +566,7 @@ def search_proawards(keyword: str, page: int = 1, page_size: int = 50) -> Tuple[
                 result = cursor.fetchall()
                 
         if result:
-            df = pd.DataFrame(result)
-            # Add Fiscal Year column based on Award Date
-            df = add_fiscal_year_column(df)
-            return df, total_count
+            return pd.DataFrame(result), total_count
             
     except mysql.connector.Error:
         # Fall back to LIKE (slower but more reliable)
@@ -469,12 +588,7 @@ def search_proawards(keyword: str, page: int = 1, page_size: int = 50) -> Tuple[
         """
         
         result = execute_query(query, params, as_dict=True)
-        if result:
-            df = pd.DataFrame(result)
-            # Add Fiscal Year column based on Award Date
-            df = add_fiscal_year_column(df)
-            return df, total_count
-        return pd.DataFrame(), total_count
+        return pd.DataFrame(result) if result else pd.DataFrame(), total_count
     
     return pd.DataFrame(), 0
 
@@ -911,7 +1025,7 @@ def show_procurement_opportunity_discovery():
                 st.dataframe(formatted_selected, hide_index=True)
 
     if st.session_state.show_awards and filters_applied:
-        st.subheader("NYC Government Procurement Awards")
+        st.subheader("Fiscal Year 2025 NYC Government Procurement Awards")
         
         # Build query using standard indexes
         where_clauses = []
@@ -946,8 +1060,36 @@ def show_procurement_opportunity_discovery():
         else:
             df_awards['Description'] = df_awards['Description'].astype(str)
             
-            # Add Fiscal Year column based on Award Date
-            df_awards = add_fiscal_year_column(df_awards)
+            # Add Award Status column with matching logic (optimized)
+            st.write("🔍 Calculating award matches...")
+            progress_bar = st.progress(0)
+            award_statuses = []
+            
+            # Get all procurement plans once (cached)
+            plans_data = get_all_procurement_plans()
+            
+            for i, (_, award_row) in enumerate(df_awards.iterrows()):
+                match_found, probability, plan_id = find_best_award_match_fast(award_row, plans_data)
+                
+                # Debug: Print first few matches to see what's happening
+                if i < 3:  # Only debug first 3 awards
+                    print(f"Debug Award {i+1}: {award_row.get('Title', 'No Title')[:50]}...")
+                    print(f"  Agency: {award_row.get('Agency', 'No Agency')}")
+                    print(f"  Match Found: {match_found}, Probability: {probability}")
+                
+                if match_found:
+                    award_statuses.append(f"Yes ({probability}%)")
+                else:
+                    award_statuses.append("No")
+                
+                # Update progress bar
+                progress_bar.progress((i + 1) / len(df_awards))
+            
+            # Add the Award Status column
+            df_awards['Award Status'] = award_statuses
+            
+            # Clear progress bar
+            progress_bar.empty()
         
             st.dataframe(
                     df_awards,
@@ -957,6 +1099,10 @@ def show_procurement_opportunity_discovery():
                             "Description", 
                             width="large",
                             max_chars=-1
+                        ),
+                        "Award Status": st.column_config.TextColumn(
+                            "Award Status",
+                            width="medium"
                         )
                     }
                 )
@@ -984,11 +1130,12 @@ def show_procurement_opportunity_discovery():
                 if not df_awards.empty:
                     for _, row in df_awards.iterrows():
                         if keyword_processor.extract_keywords(row['Title']) or keyword_processor.extract_keywords(row['Description']):
-                            # Add source identifier
+                            # Add source identifier and remove Award Status column
                             row_dict = row.to_dict()
-                            # Use the calculated Fiscal Year instead of hardcoded FY2025
-                            fiscal_year = row.get('Fiscal Year', 2025)  # Default to 2025 if not calculated
-                            row_dict['Source'] = f'FY{fiscal_year} Awards'
+                            # Remove Award Status column from Keyword Matches
+                            if 'Award Status' in row_dict:
+                                del row_dict['Award Status']
+                            row_dict['Source'] = 'FY2025 Awards'
                             combined_matches.append(row_dict)
 
                 # Display the combined matches
