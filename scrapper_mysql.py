@@ -87,13 +87,97 @@ def scrape_data():
                         award_date = award_date_elems[-1].text.strip().split('\n')[-1].strip()
                         category = category_elem.next_sibling.strip()
                         description = desc_elem.text.strip()
+                        
+                        # Extract the link from the title to get detailed information
+                        title_link = title_elem.find('a')
+                        detail_url = None
+                        if title_link and title_link.get('href'):
+                            detail_url = title_link.get('href')
+                            # Make sure it's a full URL
+                            if detail_url.startswith('/'):
+                                detail_url = 'https://a856-cityrecord.nyc.gov' + detail_url
+                        
+                        # Initialize new fields
+                        agency_division = ""
+                        selection_method = ""
+                        vendor_info = ""
+                        notice_type = ""
+                        contact_info = ""
+                        
+                        # Scrape detailed page if link is available
+                        if detail_url:
+                            try:
+                                print(f"🔗 Following detail page: {detail_url}")
+                                detail_response = requests.get(detail_url, cookies=cookies, headers=headers, timeout=30)
+                                if detail_response.status_code == 200:
+                                    detail_soup = BeautifulSoup(detail_response.text, 'html.parser')
+                                    
+                                    # Extract fields based on the actual HTML structure from the provided example
+                                    form_groups = detail_soup.find_all('div', class_='form-group form-md-line-input')
+                                    print(f"📋 Found {len(form_groups)} form groups on detail page")
+                                    
+                                    for form_group in form_groups:
+                                        label = form_group.find('label')
+                                        if label:
+                                            label_text = label.text.strip()
+                                            form_control = form_group.find('div', class_='form-control form-control-static')
+                                            
+                                            if form_control:
+                                                value = form_control.get_text(strip=True)
+                                                
+                                                if 'Agency Division' in label_text:
+                                                    agency_division = value
+                                                    print(f"✅ Found Agency Division: {value}")
+                                                elif 'Selection Method' in label_text:
+                                                    selection_method = value
+                                                    print(f"✅ Found Selection Method: {value}")
+                                                elif 'Vendor Information' in label_text:
+                                                    vendor_info = value
+                                                    print(f"✅ Found Vendor Information: {value}")
+                                                elif 'Notice Type' in label_text:
+                                                    notice_type = value
+                                                    print(f"✅ Found Notice Type: {value}")
+                                                elif 'Contact Information' in label_text:
+                                                    contact_info = value
+                                                    print(f"✅ Found Contact Information: {value}")
+                                    
+                                    # Add a small delay between detail page requests
+                                    time.sleep(random.uniform(0.5, 1.5))
+                                    
+                            except Exception as e:
+                                print(f"❌ Error scraping detail page {detail_url}: {e}")
+                        else:
+                            print("⚠️ No detail URL found for this item")
+
+                        # Print extracted data for verification
+                        print(f"\n{'='*50}")
+                        print(f"RECORD #{len(data_data) + 1}")
+                        print(f"{'='*50}")
+                        print(f"Agency: {agency}")
+                        print(f"Title: {title}")
+                        print(f"Award Date: {award_date}")
+                        print(f"Category: {category}")
+                        print(f"Description: {description[:100]}..." if len(description) > 100 else f"Description: {description}")
+                        print(f"\n--- NEW FIELDS ---")
+                        print(f"Agency Division: {agency_division}")
+                        print(f"Selection Method: {selection_method}")
+                        print(f"Vendor Information: {vendor_info}")
+                        print(f"Notice Type: {notice_type}")
+                        print(f"Contact Information: {contact_info}")
+                        print(f"Detail URL: {detail_url if detail_url else 'No link found'}")
+                        print(f"{'='*50}\n")
 
                         data_data.append({
                             'Agency': agency,
                             'Title': title,
                             'Award Date': award_date,
                             'Description': description,
-                            'Category': category
+                            'Category': category,
+                            'Agency Division': agency_division,
+                            'Selection Method': selection_method,
+                            'Vendor Information': vendor_info,
+                            'Notice Type': notice_type,
+                            'Contact Information': contact_info
                         })
                     except Exception as e:
                         print(f"Error processing notice item: {e}")
@@ -127,7 +211,12 @@ def scraper(conn):
                     Title TEXT,
                     `Award Date` DATE,
                     Description TEXT,
-                    Category VARCHAR(255)
+                    Category VARCHAR(255),
+                    `Agency Division` VARCHAR(255),
+                    `Selection Method` VARCHAR(255),
+                    `Vendor Information` TEXT,
+                    `Notice Type` VARCHAR(255),
+                    `Contact Information` TEXT
                 )
             """)
             conn.commit()
@@ -140,14 +229,22 @@ def scraper(conn):
                     if exists:
                         cursor.execute("""
                             UPDATE nycproawards4 
-                            SET Agency=%s, `Award Date`=%s, Description=%s, Category=%s 
+                            SET Agency=%s, `Award Date`=%s, Description=%s, Category=%s, 
+                                `Agency Division`=%s, `Selection Method`=%s, `Vendor Information`=%s, 
+                                `Notice Type`=%s, `Contact Information`=%s
                             WHERE Title=%s
-                        """, (row['Agency'], row['Award Date'], row['Description'], row['Category'], row['Title']))
+                        """, (row['Agency'], row['Award Date'], row['Description'], row['Category'], 
+                              row['Agency Division'], row['Selection Method'], row['Vendor Information'], 
+                              row['Notice Type'], row['Contact Information'], row['Title']))
                     else:
                         cursor.execute("""
-                            INSERT INTO nycproawards4 (Agency, Title, `Award Date`, Description, Category) 
-                            VALUES (%s, %s, %s, %s, %s)
-                        """, (row['Agency'], row['Title'], row['Award Date'], row['Description'], row['Category']))
+                            INSERT INTO nycproawards4 (Agency, Title, `Award Date`, Description, Category, 
+                                                     `Agency Division`, `Selection Method`, `Vendor Information`, 
+                                                     `Notice Type`, `Contact Information`) 
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (row['Agency'], row['Title'], row['Award Date'], row['Description'], row['Category'],
+                              row['Agency Division'], row['Selection Method'], row['Vendor Information'], 
+                              row['Notice Type'], row['Contact Information']))
 
                 except Exception as err:
                     print(f"⚠️ Database error processing record: {err}")
