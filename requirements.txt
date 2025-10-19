@@ -8,7 +8,7 @@ pytz
 plotly
 beautifulsoup4
 mysql-connector-python
-streamlit
+streamlit==1.50.0
 pymysql
 SQLAlchemy
 cryptography
