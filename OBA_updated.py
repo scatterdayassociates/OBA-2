@@ -823,12 +823,21 @@ def format_dataframe_for_display(df: pd.DataFrame) -> pd.DataFrame:
 @st.cache_data(ttl=86400)  # Cache for 24 hours
 def get_all_dropdown_values(fiscal_years: List[str] = None):
     """Pre-compute all dropdown values in a single function to avoid multiple DB calls"""
-    return {
-        "Agency": get_unique_values("agency", fiscal_years),
-        "Procurement Method": get_unique_values("procurement_method", fiscal_years),
-        "Fiscal Quarter": get_unique_values("fiscal_quarter", fiscal_years),
-        "Job Titles": get_unique_values("job_titles", fiscal_years)
-    }
+    try:
+        return {
+            "Agency": get_unique_values("agency", fiscal_years) or [],
+            "Procurement Method": get_unique_values("procurement_method", fiscal_years) or [],
+            "Fiscal Quarter": get_unique_values("fiscal_quarter", fiscal_years) or [],
+            "Job Titles": get_unique_values("job_titles", fiscal_years) or []
+        }
+    except Exception as e:
+        print(f"Error getting dropdown values: {e}")
+        return {
+            "Agency": [],
+            "Procurement Method": [],
+            "Fiscal Quarter": [],
+            "Job Titles": []
+        }
 
 # ============ PAGE FUNCTIONS ============
 
@@ -887,30 +896,36 @@ def show_procurement_opportunity_discovery():
     # Get dropdown values based on selected fiscal years
     dropdown_values = get_all_dropdown_values(fiscal_years if fiscal_years else ['2025'])
     
+    # Ensure all dropdown values are lists and not None
+    agency_options = [""] + (dropdown_values.get("Agency", []) or [])
+    procurement_options = [""] + (dropdown_values.get("Procurement Method", []) or [])
+    quarter_options = [""] + (dropdown_values.get("Fiscal Quarter", []) or [])
+    job_options = [""] + (dropdown_values.get("Job Titles", []) or [])
+    
     agency = st.sidebar.selectbox(
         "Agency",
-        [""] + dropdown_values["Agency"],
+        agency_options,
         index=default_index,
         key="agency"
     )
     
     procurement_method = st.sidebar.selectbox(
         "Procurement Method",
-        [""] + dropdown_values["Procurement Method"],
+        procurement_options,
         index=default_index,
         key="procurement_method"
     )
     
     fiscal_quarter = st.sidebar.selectbox(
         "Fiscal Quarter",
-        [""] + dropdown_values["Fiscal Quarter"],
+        quarter_options,
         index=default_index,
         key="fiscal_quarter"
     )
     
     job_titles = st.sidebar.selectbox(
         "Job Titles",
-        [""] + dropdown_values["Job Titles"],
+        job_options,
         index=default_index,
         key="job_titles"
     )
@@ -2190,7 +2205,7 @@ def main():
     # Add solution module selector to sidebar
     st.sidebar.header("Solution Module")
     page_selection = st.sidebar.selectbox(
-        "",
+        "Select Module",
         ["Procurement Opportunity Discovery", "Procurement Topic Analysis"],
         index=0,
         key="page_selection"
