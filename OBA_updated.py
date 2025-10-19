@@ -873,7 +873,7 @@ def show_procurement_opportunity_discovery():
         st.session_state.previous_selection = set()
     
     default_value = "" if st.session_state.get('reset_trigger', False) else st.session_state.get('keyword', "")
-    default_index = 0 if st.session_state.get('reset_trigger', False) else None
+    default_index = 0 if st.session_state.get('reset_trigger', False) else 0
     
     st.sidebar.header("Search Filters")
     
