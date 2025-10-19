@@ -230,7 +230,7 @@ def get_unique_values(column: str, fiscal_years: List[str] = None) -> List[str]:
         try:
             result = execute_query(query)
             if result:
-                year_values = [row[0] for row in result]
+                year_values = [row[0] for row in result if row[0] is not None and str(row[0]).strip()]
                 all_values.update(year_values)
         except Exception as e:
             # If table doesn't exist or other error, skip this year
@@ -239,7 +239,13 @@ def get_unique_values(column: str, fiscal_years: List[str] = None) -> List[str]:
             continue
     
     # Convert all values to strings before sorting to avoid type comparison errors
-    string_values = [str(value) for value in all_values]
+    string_values = [str(value) for value in all_values if value is not None and str(value).strip()]
+    
+    # If no values found, return empty list to prevent selectbox errors
+    if not string_values:
+        print(f"Warning: No unique values found for {column} in fiscal years {fiscal_years}")
+        return []
+    
     return sorted(string_values)
     
 
@@ -893,14 +899,33 @@ def show_procurement_opportunity_discovery():
         key="fiscal_years"
     )
     
-    # Get dropdown values based on selected fiscal years
-    dropdown_values = get_all_dropdown_values(fiscal_years if fiscal_years else ['2025'])
+    # Get dropdown values based on selected fiscal years with robust error handling
+    try:
+        dropdown_values = get_all_dropdown_values(fiscal_years if fiscal_years else ['2025'])
+    except Exception as e:
+        print(f"Error getting dropdown values: {e}")
+        dropdown_values = {
+            "Agency": [],
+            "Procurement Method": [],
+            "Fiscal Quarter": [],
+            "Job Titles": []
+        }
     
-    # Ensure all dropdown values are lists and not None
-    agency_options = [""] + (dropdown_values.get("Agency", []) or [])
-    procurement_options = [""] + (dropdown_values.get("Procurement Method", []) or [])
-    quarter_options = [""] + (dropdown_values.get("Fiscal Quarter", []) or [])
-    job_options = [""] + (dropdown_values.get("Job Titles", []) or [])
+    # Ensure all dropdown values are lists and not None with additional safety checks
+    def safe_get_options(key, default=[]):
+        try:
+            values = dropdown_values.get(key, default) or default
+            if not isinstance(values, list):
+                return [""]
+            return [""] + [str(v) for v in values if v is not None and str(v).strip()]
+        except Exception as e:
+            print(f"Error processing {key} options: {e}")
+            return [""]
+    
+    agency_options = safe_get_options("Agency")
+    procurement_options = safe_get_options("Procurement Method")
+    quarter_options = safe_get_options("Fiscal Quarter")
+    job_options = safe_get_options("Job Titles")
     
     agency = st.sidebar.selectbox(
         "Agency",
